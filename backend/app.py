@@ -404,6 +404,25 @@ async def delete_watch(watch_id: str):
     await app.state.seen_col.delete_many({"watch_id": watch_id})
     return {"deleted": watch_id}
 
+@app.get("/health")
+async def health_check(response: Response):
+    try:
+        # Lightweight ping to verify MongoDB connection is alive
+        await app.state.watches_col.database.client.admin.command("ping")
+        active_watches = await app.state.watches_col.count_documents({"active": True})
+        return {
+            "status": "ok",
+            "db": "connected",
+            "active_watches": active_watches,
+        }
+    except Exception as exc:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "error",
+            "db": "disconnected",
+            "detail": str(exc),
+        }
+
 
 if __name__ == "__main__":
     import uvicorn
