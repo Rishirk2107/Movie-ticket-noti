@@ -1,13 +1,11 @@
 import asyncio
 import os
 import random
-import smtplib
 import urllib.parse
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from email.message import EmailMessage
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -25,11 +23,9 @@ MONGO_DB = os.getenv("MONGO_DB", "bms_watcher")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 BMS_COOKIE = os.getenv("BMS_COOKIE", "")
 
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "")
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "BMS Ticket Alerts")
 
 API_BASE_URL = (
     "https://in.bookmyshow.com/api/movies-data/v5/showtimes-by-event/primary-dynamic"
@@ -150,31 +146,43 @@ def send_ntfy_notification(title: str, message: str) -> None:
             print(f"[WARN] ntfy push failed: {exc}")
 
 
-def send_email_notifications(recipients: list[str], subject: str, body: str) -> None:
+async def send_brevo_email(recipients: list[str], subject: str, text_body: str) -> None:
     cleaned = [addr.strip() for addr in recipients if addr and addr.strip()]
     if not cleaned:
         return
 
-    if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD and SMTP_FROM):
-        print("[WARN] Email skipped: SMTP environment variables are not fully configured.")
+    if not (BREVO_API_KEY and BREVO_SENDER_EMAIL):
+        print("[WARN] Brevo email skipped: BREVO_API_KEY or BREVO_SENDER_EMAIL not set.")
         return
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
-    msg["To"] = ", ".join(cleaned)
-    msg.set_content(body)
+    html_lines = "<br>".join(text_body.splitlines())
+    payload = {
+        "sender": {
+            "name": BREVO_SENDER_NAME,
+            "email": BREVO_SENDER_EMAIL,
+        },
+        "to": [{"email": addr} for addr in cleaned],
+        "subject": subject,
+        "textContent": text_body,
+        "htmlContent": f"<p>{html_lines}</p>",
+    }
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
-        print(f"[EMAIL SENT] To {len(cleaned)} recipient(s): {subject}")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+        print(f"[BREVO SENT] To {len(cleaned)} recipient(s): {subject}")
     except Exception as exc:
-        print(f"[WARN] Email send failed: {exc}")
+        print(f"[WARN] Brevo email failed: {exc}")
 
 
 async def record_venues_and_get_new(
@@ -236,12 +244,7 @@ async def poll_loop(watches_col, seen_col) -> None:
                         + f"\n\nShowtimes URL: {job['url']}"
                     )
                     await asyncio.to_thread(send_ntfy_notification, title, summary)
-                    await asyncio.to_thread(
-                        send_email_notifications,
-                        job.get("emails", []),
-                        title,
-                        email_body,
-                    )
+                    await send_brevo_email(job.get("emails", []), title, email_body)
 
                 await watches_col.update_one(
                     {"_id": watch_id},
@@ -294,6 +297,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BookMyShow Theatre Watcher", lifespan=lifespan)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -400,4 +408,4 @@ async def delete_watch(watch_id: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=False)
