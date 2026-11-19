@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
+from curl_cffi.requests import AsyncSession
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -113,12 +114,35 @@ def parse_venues(payload: dict) -> dict[str, str]:
     return venues
 
 
+# async def fetch_venues_direct(raw_url: str) -> dict[str, str]:
+#     api_url, referer = build_api_url(raw_url)
+#     headers = {**DEFAULT_HEADERS, "Referer": referer}
+
+#     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+#         resp = await client.get(api_url, headers=headers)
+#         if resp.status_code != 200:
+#             snippet = resp.text[:200].replace("\n", " ")
+#             raise RuntimeError(f"HTTP {resp.status_code} from BMS API: {snippet}")
+#         try:
+#             payload = resp.json()
+#         except Exception as exc:
+#             snippet = resp.text[:200].replace("\n", " ")
+#             raise RuntimeError(f"Non-JSON response ({exc}): {snippet}") from exc
+
+#     return parse_venues(payload)
+
+from curl_cffi.requests import AsyncSession
+
 async def fetch_venues_direct(raw_url: str) -> dict[str, str]:
     api_url, referer = build_api_url(raw_url)
-    headers = {**DEFAULT_HEADERS, "Referer": referer}
+    headers = {
+        **DEFAULT_HEADERS,
+        "Referer": referer,
+        "Accept-Language": "en-US,en;q=0.9",
+    }
 
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        resp = await client.get(api_url, headers=headers)
+    async with AsyncSession(impersonate="chrome", timeout=20.0) as session:
+        resp = await session.get(api_url, headers=headers)
         if resp.status_code != 200:
             snippet = resp.text[:200].replace("\n", " ")
             raise RuntimeError(f"HTTP {resp.status_code} from BMS API: {snippet}")
