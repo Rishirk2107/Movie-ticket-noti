@@ -1,11 +1,13 @@
 import asyncio
 import os
 import random
+import smtplib
 import urllib.parse
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -16,12 +18,18 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, HttpUrl
 from pymongo import ASCENDING, AsyncMongoClient, IndexModel
 
-load_dotenv()  # Reads .env into os.environ before os.getenv() runs
+load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "bms_watcher")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 BMS_COOKIE = os.getenv("BMS_COOKIE", "")
+
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
 API_BASE_URL = (
     "https://in.bookmyshow.com/api/movies-data/v5/showtimes-by-event/primary-dynamic"
@@ -53,18 +61,16 @@ class WatchCreateRequest(BaseModel):
     url: HttpUrl
     interval_minutes: int = 7  # 5 to 10 minutes
     label: Optional[str] = None
+    emails: list[str] = []
 
 
 def build_api_url(raw_url: str) -> tuple[str, str]:
-    """Converts a BookMyShow showtimes page URL or API URL into (api_url, referer_url)."""
     parsed = urlparse(raw_url)
     qs = parse_qs(parsed.query)
 
-    # If the user already pasted the primary-dynamic API URL, use it directly
     if "/api/movies-data/" in parsed.path and "showtimes-by-event" in parsed.path:
         return raw_url, "https://in.bookmyshow.com/"
 
-    # Otherwise extract eventCode & dateCode from /buytickets/{eventCode}/{dateCode}
     parts = [p for p in parsed.path.split("/") if p]
     event_code = qs.get("refEventCode", [None])[0]
     date_code = qs.get("dateCode", [None])[0]
@@ -129,7 +135,7 @@ async def fetch_venues_direct(raw_url: str) -> dict[str, str]:
     return parse_venues(payload)
 
 
-def send_notification(title: str, message: str) -> None:
+def send_ntfy_notification(title: str, message: str) -> None:
     print(f"[ALERT] {title}: {message}")
     if NTFY_TOPIC:
         req = urllib.request.Request(
@@ -142,6 +148,33 @@ def send_notification(title: str, message: str) -> None:
             urllib.request.urlopen(req, timeout=10)
         except Exception as exc:
             print(f"[WARN] ntfy push failed: {exc}")
+
+
+def send_email_notifications(recipients: list[str], subject: str, body: str) -> None:
+    cleaned = [addr.strip() for addr in recipients if addr and addr.strip()]
+    if not cleaned:
+        return
+
+    if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD and SMTP_FROM):
+        print("[WARN] Email skipped: SMTP environment variables are not fully configured.")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ", ".join(cleaned)
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        print(f"[EMAIL SENT] To {len(cleaned)} recipient(s): {subject}")
+    except Exception as exc:
+        print(f"[WARN] Email send failed: {exc}")
 
 
 async def record_venues_and_get_new(
@@ -195,8 +228,20 @@ async def poll_loop(watches_col, seen_col) -> None:
 
                 if added:
                     summary = "; ".join(f"{name} ({code})" for code, name in added)
-                    title = f"New Theatre - {job.get('label') or 'BookMyShow Watch'}"
-                    await asyncio.to_thread(send_notification, title, summary)
+                    watch_label = job.get("label") or "BookMyShow Watch"
+                    title = f"New Theatre - {watch_label}"
+                    email_body = (
+                        f"New theatre(s) added for {watch_label}:\n\n"
+                        + "\n".join(f"- {name} ({code})" for code, name in added)
+                        + f"\n\nShowtimes URL: {job['url']}"
+                    )
+                    await asyncio.to_thread(send_ntfy_notification, title, summary)
+                    await asyncio.to_thread(
+                        send_email_notifications,
+                        job.get("emails", []),
+                        title,
+                        email_body,
+                    )
 
                 await watches_col.update_one(
                     {"_id": watch_id},
@@ -248,7 +293,7 @@ async def lifespan(app: FastAPI):
         await client.close()
 
 
-app = FastAPI(title="BookMyShow Theatre Watcher (Direct API)", lifespan=lifespan)
+app = FastAPI(title="BookMyShow Theatre Watcher", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -262,8 +307,9 @@ def home() -> str:
       <form id="watchForm">
         <input id="url" type="url" placeholder="https://in.bookmyshow.com/..." style="width: 100%; padding: 8px;" required /><br/><br/>
         <label>Interval (5–10 min): <input id="interval" type="number" min="5" max="10" value="7" /></label>
-        <input id="label" type="text" placeholder="Optional label (e.g. Avengers Fri)" style="margin-left: 12px; padding: 6px;" />
-        <button type="submit" style="margin-left: 12px; padding: 6px 14px;">Start Watching</button>
+        <input id="label" type="text" placeholder="Optional label (e.g. Avengers Fri)" style="margin-left: 12px; padding: 6px;" /><br/><br/>
+        <input id="emails" type="text" placeholder="Friend emails separated by commas" style="width: 100%; padding: 8px;" /><br/><br/>
+        <button type="submit" style="padding: 6px 14px;">Start Watching</button>
       </form>
       <pre id="out" style="background: #f4f4f4; padding: 12px; margin-top: 20px;"></pre>
       <script>
@@ -273,10 +319,12 @@ def home() -> str:
         }
         document.getElementById('watchForm').addEventListener('submit', async (e) => {
           e.preventDefault();
+          const rawEmails = document.getElementById('emails').value.split(',').map(s => s.trim()).filter(Boolean);
           const body = {
             url: document.getElementById('url').value,
             interval_minutes: Number(document.getElementById('interval').value),
-            label: document.getElementById('label').value || null
+            label: document.getElementById('label').value || null,
+            emails: rawEmails
           };
           await fetch('/watches', {
             method: 'POST',
@@ -300,6 +348,7 @@ async def create_watch(payload: WatchCreateRequest):
     url_str = str(payload.url)
     watch_id = str(uuid.uuid4())[:8]
     now_iso = datetime.now(timezone.utc).isoformat()
+    cleaned_emails = [e.strip() for e in payload.emails if e and e.strip()]
 
     initial_venues = await fetch_venues_direct(url_str)
 
@@ -308,6 +357,7 @@ async def create_watch(payload: WatchCreateRequest):
         "url": url_str,
         "label": payload.label,
         "interval_minutes": payload.interval_minutes,
+        "emails": cleaned_emails,
         "active": True,
         "created_at": now_iso,
         "last_checked_at": now_iso,
