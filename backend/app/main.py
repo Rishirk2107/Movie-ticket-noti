@@ -2,7 +2,8 @@
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response, status
@@ -12,6 +13,8 @@ from pydantic import BaseModel, HttpUrl
 from app.bms_client import extract_url_info, fetch_venues_direct, replace_url_date
 from app.db import init_db, record_venues_and_get_new
 from app.poller import get_watch_date_codes, poll_loop
+
+INDEX_HTML_PATH = Path(__file__).parent / "templates" / "index.html"
 
 
 class WatchCreateRequest(BaseModel):
@@ -56,148 +59,10 @@ async def health_check(response: Response):
 
 
 @app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    return """
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>BookMyShow Theatre Watcher</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; color: #333; }
-        .card { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 24px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
-        h2 { margin-top: 0; color: #111; }
-        label { display: block; font-weight: 600; margin-top: 14px; margin-bottom: 6px; font-size: 14px; }
-        input, select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
-        .row { display: flex; gap: 14px; }
-        .row > div { flex: 1; }
-        button { background: #e50914; color: white; border: none; border-radius: 6px; padding: 12px 20px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 20px; }
-        button:hover { background: #b80710; }
-        pre { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 16px; margin-top: 24px; font-size: 12px; overflow-x: auto; }
-        .hint { font-size: 12px; color: #666; font-weight: normal; margin-left: 4px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>🎬 BookMyShow Theatre Watcher</h2>
-        <form id="watchForm">
-          <label>BookMyShow Showtimes URL</label>
-          <input id="url" type="url" placeholder="https://in.bookmyshow.com/movies/.../buytickets/..." required />
-
-          <div class="row">
-            <div>
-              <label>Start Date <span class="hint">(Detected from link)</span></label>
-              <input id="startDate" type="date" required />
-            </div>
-            <div>
-              <label>End Date <span class="hint">(Max 2 weeks from start)</span></label>
-              <input id="endDate" type="date" required />
-            </div>
-          </div>
-
-          <div class="row">
-            <div>
-              <label>Interval (minutes)</label>
-              <input id="interval" type="number" min="1" max="60" value="2" required />
-            </div>
-            <div>
-              <label>Label <span class="hint">(Optional)</span></label>
-              <input id="label" type="text" placeholder="e.g. Avengers Doomsday" />
-            </div>
-          </div>
-
-          <label>Alert Emails <span class="hint">(Comma-separated)</span></label>
-          <input id="emails" type="text" placeholder="user1@gmail.com, user2@gmail.com" />
-
-          <button type="submit">Start Watching</button>
-        </form>
-      </div>
-
-      <h3>Active Watches</h3>
-      <pre id="out">Loading...</pre>
-
-      <script>
-        const urlInput = document.getElementById('url');
-        const startDateInput = document.getElementById('startDate');
-        const endDateInput = document.getElementById('endDate');
-
-        function parseDateFromUrl(urlStr) {
-          try {
-            const url = new URL(urlStr);
-            const parts = url.pathname.split('/').filter(Boolean);
-            const idx = parts.indexOf('buytickets');
-            let dateStr = url.searchParams.get('dateCode');
-            if (!dateStr && idx !== -1 && idx + 2 < parts.length) {
-              dateStr = parts[idx + 2];
-            }
-            if (dateStr && /^[0-9]{8}$/.test(dateStr)) {
-              return `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}`;
-            }
-          } catch (e) {}
-          return null;
-        }
-
-        urlInput.addEventListener('input', () => {
-          const detected = parseDateFromUrl(urlInput.value);
-          if (detected) {
-            startDateInput.value = detected;
-            updateDateRangeBounds(detected);
-          }
-        });
-
-        startDateInput.addEventListener('change', () => {
-          updateDateRangeBounds(startDateInput.value);
-        });
-
-        function updateDateRangeBounds(startVal) {
-          if (!startVal) return;
-          const s = new Date(startVal);
-          const maxDate = new Date(s);
-          maxDate.setDate(s.getDate() + 14);
-
-          const maxIso = maxDate.toISOString().split('T')[0];
-          endDateInput.min = startVal;
-          endDateInput.max = maxIso;
-
-          if (!endDateInput.value || endDateInput.value < startVal || endDateInput.value > maxIso) {
-            endDateInput.value = startVal;
-          }
-        }
-
-        async function refresh() {
-          const res = await fetch('/watches');
-          document.getElementById('out').textContent = JSON.stringify(await res.json(), null, 2);
-        }
-
-        document.getElementById('watchForm').addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const rawEmails = document.getElementById('emails').value.split(',').map(s => s.trim()).filter(Boolean);
-          const body = {
-            url: urlInput.value,
-            start_date: startDateInput.value,
-            end_date: endDateInput.value,
-            interval_minutes: Number(document.getElementById('interval').value),
-            label: document.getElementById('label').value || null,
-            emails: rawEmails
-          };
-          const res = await fetch('/watches', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            alert('Error: ' + (err.detail || 'Could not save watch'));
-            return;
-          }
-          refresh();
-        });
-
-        refresh();
-      </script>
-    </body>
-    </html>
-    """
+def home() -> HTMLResponse:
+    if INDEX_HTML_PATH.exists():
+        return HTMLResponse(content=INDEX_HTML_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h2>Template index.html not found</h2>", status_code=500)
 
 
 @app.post("/watches", status_code=201)
