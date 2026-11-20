@@ -10,7 +10,12 @@ async def init_db() -> tuple[AsyncMongoClient, object, object]:
     seen_col = db["seen_venues"]
 
     await seen_col.create_indexes(
-        [IndexModel([("watch_id", ASCENDING), ("venue_code", ASCENDING)], unique=True)]
+        [
+            IndexModel(
+                [("watch_id", ASCENDING), ("date_code", ASCENDING), ("venue_code", ASCENDING)],
+                unique=True,
+            )
+        ]
     )
     return client, watches_col, seen_col
 
@@ -20,6 +25,7 @@ async def record_venues_and_get_new(
     watch_id: str,
     venues: dict[str, str],
     *,
+    date_code: str = "",
     mark_notified: bool,
 ) -> list[tuple[str, str]]:
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -27,10 +33,11 @@ async def record_venues_and_get_new(
 
     for code, name in venues.items():
         res = await seen_col.update_one(
-            {"watch_id": watch_id, "venue_code": code},
+            {"watch_id": watch_id, "date_code": date_code, "venue_code": code},
             {
                 "$setOnInsert": {
                     "watch_id": watch_id,
+                    "date_code": date_code,
                     "venue_code": code,
                     "venue_name": name,
                     "first_seen_at": now_iso,

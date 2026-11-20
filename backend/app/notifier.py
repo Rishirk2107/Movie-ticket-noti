@@ -70,14 +70,20 @@ async def notify_new_venues(
     url: str,
     emails: list[str],
     added: list[tuple[str, str]],
+    date_code: str | None = None,
 ) -> None:
     if not added:
         return
     watch_label = label or "BookMyShow Watch"
-    title = f"New Theatre - {watch_label}"
+    date_formatted = ""
+    if date_code and len(date_code) == 8:
+        # e.g. 20261218 -> 2026-12-18
+        date_formatted = f" ({date_code[:4]}-{date_code[4:6]}-{date_code[6:]})"
+    
+    title = f"New Theatre - {watch_label}{date_formatted}"
     summary = "; ".join(f"{name} ({code})" for code, name in added)
     email_body = (
-        f"New theatre(s) added for {watch_label}:\n\n"
+        f"New theatre(s) added for {watch_label}{date_formatted}:\n\n"
         + "\n".join(f"- {name} ({code})" for code, name in added)
         + f"\n\nShowtimes URL: {url}"
     )
