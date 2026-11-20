@@ -76,12 +76,35 @@ async def run_single_watch_check(watches_col, seen_col, job: dict) -> list[tuple
     return all_added
 
 
+def is_watch_expired(job: dict) -> bool:
+    end = job.get("end_date") or job.get("start_date")
+    if not end:
+        return False
+    try:
+        # End date in format YYYY-MM-DD
+        end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+        today = datetime.now(timezone.utc).date()
+        # Expired if the end date has already passed
+        return today > end_dt
+    except Exception:
+        return False
+
+
 async def poll_loop(watches_col, seen_col) -> None:
     while True:
         now = datetime.now(timezone.utc)
         async for job in watches_col.find({"active": True}):
+            watch_id = job["_id"]
+
+            # Automatically delete watch and its seen records once date range is over
+            if is_watch_expired(job):
+                print(f"[CLEANUP] Watch {watch_id} ({job.get('label')}) expired on {job.get('end_date')}. Deleting...")
+                await watches_col.delete_one({"_id": watch_id})
+                await seen_col.delete_many({"watch_id": watch_id})
+                continue
+
             last_checked_str = job.get("last_checked_at")
-            interval_sec = int(job.get("interval_minutes", 7)) * 60
+            interval_sec = int(job.get("interval_minutes", 10)) * 60
 
             if last_checked_str:
                 elapsed = (now - datetime.fromisoformat(last_checked_str)).total_seconds()
