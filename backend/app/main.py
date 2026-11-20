@@ -12,6 +12,7 @@ from pydantic import BaseModel, HttpUrl
 
 from app.bms_client import extract_url_info, fetch_venues_direct, replace_url_date
 from app.db import init_db, record_venues_and_get_new
+from app.notifier import send_watch_registration_email
 from app.poller import get_watch_date_codes, poll_loop
 
 INDEX_HTML_PATH = Path(__file__).parent / "templates" / "index.html"
@@ -131,6 +132,22 @@ async def create_watch(payload: WatchCreateRequest):
             print(f"[WARN] Initial fetch for date {d_code} encountered error: {e}")
 
     await app.state.watches_col.insert_one(doc)
+
+    # Send registration confirmation email to all recipient emails (excludes interval details)
+    if cleaned_emails:
+        asyncio.create_task(
+            send_watch_registration_email(
+                emails=cleaned_emails,
+                label=payload.label,
+                movie_name=info.get("movie_name", ""),
+                city=info.get("city", ""),
+                start_date=start_date,
+                end_date=end_date,
+                url=url_str,
+                initial_theatres_count=total_initial_venues,
+            )
+        )
+
     return {**doc, "known_venue_count": total_initial_venues}
 
 

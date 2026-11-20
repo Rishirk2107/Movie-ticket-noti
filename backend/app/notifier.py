@@ -89,3 +89,40 @@ async def notify_new_venues(
     )
     await send_ntfy_notification(title, summary)
     await send_brevo_email(emails, title, email_body)
+
+
+async def send_watch_registration_email(
+    emails: list[str],
+    label: str,
+    movie_name: str,
+    city: str,
+    start_date: str | None,
+    end_date: str | None,
+    url: str,
+    initial_theatres_count: int,
+) -> None:
+    if not emails:
+        return
+    
+    date_str = ""
+    if start_date and end_date and start_date != end_date:
+        date_str = f"{start_date} to {end_date}"
+    elif start_date:
+        date_str = start_date
+    else:
+        date_str = "Selected date(s)"
+
+    subject = f"Notification Alert Set: {label}"
+    text_body = (
+        f"Hello,\n\n"
+        f"You have been registered to receive BookMyShow ticket alerts for:\n\n"
+        f"• Movie / Event: {movie_name or label}\n"
+        f"• Watch Label: {label}\n"
+        f"• Area / City: {city or 'Not specified'}\n"
+        f"• Date Range: {date_str}\n"
+        f"• Currently Open Theatres: {initial_theatres_count}\n"
+        f"• Showtimes URL: {url}\n\n"
+        f"You will receive an instant email whenever new theatres or screens open up for these dates!\n\n"
+        f"— BMS Ticket Alerts"
+    )
+    await send_brevo_email(emails, subject, text_body)

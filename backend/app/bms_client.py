@@ -14,6 +14,15 @@ def extract_url_info(raw_url: str) -> dict:
     event_code = qs.get("refEventCode", [None])[0]
     date_code = qs.get("dateCode", [None])[0]
 
+    city = ""
+    movie_slug = ""
+    if "movies" in parts:
+        m_idx = parts.index("movies")
+        if m_idx + 1 < len(parts):
+            city = parts[m_idx + 1].capitalize()
+        if m_idx + 2 < len(parts):
+            movie_slug = parts[m_idx + 2].replace("-", " ").title()
+
     if "buytickets" in parts:
         idx = parts.index("buytickets")
         if not event_code and idx + 1 < len(parts):
@@ -26,6 +35,8 @@ def extract_url_info(raw_url: str) -> dict:
         "date_code": date_code or "20261218",
         "language": qs.get("language", ["english"])[0],
         "et_codes": qs.get("etCodes", ["*"])[0],
+        "city": city,
+        "movie_name": movie_slug,
     }
 
 
