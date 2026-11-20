@@ -19,8 +19,8 @@ INDEX_HTML_PATH = Path(__file__).parent / "templates" / "index.html"
 
 class WatchCreateRequest(BaseModel):
     url: HttpUrl
-    interval_minutes: int = 7
-    label: Optional[str] = None
+    interval_minutes: int = 10
+    label: str
     emails: list[str] = []
     start_date: Optional[str] = None  # YYYY-MM-DD
     end_date: Optional[str] = None    # YYYY-MM-DD
