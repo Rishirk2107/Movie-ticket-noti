@@ -296,6 +296,43 @@
       border-radius: 8px;
       font-size: 13px;
     }
+
+    /* Real-Time Live Logs Terminal */
+    .log-container {
+      background: #111827;
+      color: #f3f4f6;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      max-height: 220px;
+      overflow-y: auto;
+      margin-top: 24px;
+      border: 1px solid #374151;
+    }
+    .log-line {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 4px;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+    .log-time {
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
+    .log-badge {
+      font-weight: 700;
+      border-radius: 3px;
+      padding: 0 4px;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+    .log-SUCCESS { color: #34d399; }
+    .log-INFO { color: #60a5fa; }
+    .log-WARN { color: #fbbf24; }
+    .log-ERROR { color: #f87171; }
+    .log-msg { color: #e5e7eb; }
   </style>
 </head>
 <body>
@@ -350,6 +387,14 @@
 
   <div id="watchesList" class="watches-list-scroll">
     <div class="empty-state">Loading watches...</div>
+  </div>
+
+  <div class="section-header" style="margin-top: 28px;">
+    <h3>API Activity Logs</h3>
+    <span style="font-size: 11px; color: #6b7280;">Auto-refreshes every 3s</span>
+  </div>
+  <div id="logBox" class="log-container">
+    <div style="color: #9ca3af;">Connecting to logs...</div>
   </div>
 
   <script>
@@ -603,6 +648,31 @@
     });
 
     fetchWatches();
+
+    // Poll live logs every 3 seconds
+    const logBox = document.getElementById('logBox');
+    async function updateLogs() {
+      try {
+        const res = await fetch('/logs?limit=30');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.logs && data.logs.length) {
+            logBox.innerHTML = data.logs.map(log => `
+              <div class="log-line">
+                <span class="log-time">[${log.timestamp}]</span>
+                <span class="log-badge log-${log.level}">${log.level}</span>
+                <span class="log-msg">${log.message}</span>
+              </div>
+            `).join('');
+          } else {
+            logBox.innerHTML = '<div style="color: #9ca3af;">No API calls logged yet.</div>';
+          }
+        }
+      } catch (e) {}
+    }
+
+    updateLogs();
+    setInterval(updateLogs, 3000);
   </script>
 </body>
 </html>

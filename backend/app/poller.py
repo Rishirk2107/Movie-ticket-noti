@@ -6,6 +6,7 @@ from curl_cffi.requests import AsyncSession
 
 from app.bms_client import fetch_venues_direct, replace_url_date
 from app.db import record_venues_and_get_new
+from app.logger import add_log
 from app.notifier import notify_new_venues
 
 
@@ -98,7 +99,7 @@ async def poll_loop(watches_col, seen_col) -> None:
 
             # Automatically delete watch and its seen records once date range is over
             if is_watch_expired(job):
-                print(f"[CLEANUP] Watch {watch_id} ({job.get('label')}) expired on {job.get('end_date')}. Deleting...")
+                add_log("INFO", f"Watch {job.get('label')} expired on {job.get('end_date')}. Auto-deleted.")
                 await watches_col.delete_one({"_id": watch_id})
                 await seen_col.delete_many({"watch_id": watch_id})
                 continue

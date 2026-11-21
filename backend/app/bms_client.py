@@ -4,6 +4,7 @@ import urllib.parse
 from urllib.parse import parse_qs, urlparse
 from curl_cffi.requests import AsyncSession
 from app.config import API_BASE_URL, DEFAULT_HEADERS
+from app.logger import add_log
 
 
 def extract_url_info(raw_url: str) -> dict:
@@ -124,18 +125,25 @@ async def fetch_venues_direct(
     async def _fetch(s: AsyncSession):
         for attempt in range(max_retries + 1):
             try:
+                add_log("INFO", f"Calling BMS API for date {date_code or 'default'}...")
                 resp = await s.get(api_url, headers=headers)
                 if resp.status_code != 200:
                     snippet = resp.text[:200].replace("\n", " ")
+                    add_log("ERROR", f"BMS API returned HTTP {resp.status_code}: {snippet}")
                     raise RuntimeError(f"HTTP {resp.status_code} from BMS API: {snippet}")
                 try:
                     payload = resp.json()
                 except Exception as exc:
                     snippet = resp.text[:200].replace("\n", " ")
+                    add_log("ERROR", f"BMS API response is not valid JSON: {snippet}")
                     raise RuntimeError(f"Non-JSON response ({exc}): {snippet}") from exc
-                return parse_venues(payload)
+                
+                venues = parse_venues(payload)
+                add_log("SUCCESS", f"BMS API responded 200 OK for date {date_code or 'default'} ({len(venues)} venues found)")
+                return venues
             except Exception as e:
                 if attempt < max_retries:
+                    add_log("WARN", f"BMS API call failed (attempt {attempt+1}/{max_retries+1}): {e}. Retrying...")
                     await asyncio.sleep(2.0 * (attempt + 1))
                 else:
                     raise e

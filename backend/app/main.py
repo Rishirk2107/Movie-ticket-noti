@@ -12,6 +12,7 @@ from pydantic import BaseModel, HttpUrl
 
 from app.bms_client import extract_url_info, fetch_venues_direct, replace_url_date
 from app.db import init_db, record_venues_and_get_new
+from app.logger import get_logs
 from app.notifier import send_watch_registration_email
 from app.poller import get_watch_date_codes, poll_loop
 
@@ -174,3 +175,8 @@ async def delete_watch(watch_id: str):
         raise HTTPException(status_code=404, detail="Watch not found.")
     await app.state.seen_col.delete_many({"watch_id": watch_id})
     return {"deleted": watch_id}
+
+
+@app.get("/logs")
+async def fetch_realtime_logs(limit: int = 50):
+    return {"logs": get_logs(limit=limit)}
