@@ -11,6 +11,7 @@ BMS_COOKIE = os.getenv("BMS_COOKIE", "")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "BMS Ticket Alerts")
+ADMIN_ALERT_EMAIL = os.getenv("ADMIN_ALERT_EMAIL", "rishikumarss2004@gmail.com")
 
 API_BASE_URL = (
     "https://in.bookmyshow.com/api/movies-data/v5/showtimes-by-event/primary-dynamic"

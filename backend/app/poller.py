@@ -7,7 +7,7 @@ from curl_cffi.requests import AsyncSession
 from app.bms_client import fetch_venues_direct, replace_url_date
 from app.db import record_venues_and_get_new
 from app.logger import add_log
-from app.notifier import notify_new_venues
+from app.notifier import notify_new_venues, send_failure_alert_email
 
 
 def get_watch_date_codes(job: dict) -> list[str]:
@@ -65,6 +65,19 @@ async def run_single_watch_check(watches_col, seen_col, job: dict) -> list[tuple
                 errors.append(err_msg)
 
     last_error = "; ".join(errors) if errors else None
+    if errors:
+        # Check if the previous check had no error to avoid spamming on every interval
+        prev_error = job.get("last_error")
+        if not prev_error:
+            asyncio.create_task(
+                send_failure_alert_email(
+                    watch_label=job.get("label", "Unknown"),
+                    watch_url=job.get("url", ""),
+                    errors=errors,
+                    watch_id=watch_id,
+                )
+            )
+
     await watches_col.update_one(
         {"_id": watch_id},
         {
