@@ -2,7 +2,6 @@ import asyncio
 import urllib.request
 import httpx
 from app.config import (
-    ADMIN_ALERT_EMAIL,
     BREVO_API_KEY,
     BREVO_SENDER_EMAIL,
     BREVO_SENDER_NAME,
@@ -127,28 +126,3 @@ async def send_watch_registration_email(
         f"— BMS Ticket Alerts"
     )
     await send_brevo_email(emails, subject, text_body)
-
-
-async def send_failure_alert_email(
-    watch_label: str,
-    watch_url: str,
-    errors: list[str],
-    watch_id: str,
-) -> None:
-    if not ADMIN_ALERT_EMAIL:
-        return
-
-    subject = f"[ALERT] BMS Watch Failure: {watch_label}"
-    err_details = "\n".join(f"• {e}" for e in errors)
-    body = (
-        f"Hi,\n\n"
-        f"A BookMyShow polling check failed for:\n\n"
-        f"• Watch Label: {watch_label}\n"
-        f"• Watch ID: {watch_id}\n"
-        f"• Showtimes URL: {watch_url}\n\n"
-        f"Error Details:\n"
-        f"{err_details}\n\n"
-        f"Please check if BookMyShow is blocking requests or if the URL/cookie needs updating.\n\n"
-        f"— BMS Watcher System"
-    )
-    await send_brevo_email([ADMIN_ALERT_EMAIL], subject, body)
