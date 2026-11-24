@@ -10,6 +10,7 @@ from typing import Optional
 
 from curl_cffi.requests import AsyncSession
 from fastapi import FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, HttpUrl
 
@@ -22,7 +23,14 @@ from app.bms_client import (
     parse_venues_and_dates,
     replace_url_date,
 )
-from app.config import API_BASE_URL, DEFAULT_HEADERS, SYNOPSIS_API_URL, SYNOPSIS_STATIC_API_URL
+from app.config import (
+    API_BASE_URL,
+    CORS_ORIGINS,
+    DEFAULT_HEADERS,
+    IST_TZ,
+    SYNOPSIS_API_URL,
+    SYNOPSIS_STATIC_API_URL,
+)
 from app.db import init_db, record_venues_and_get_new, update_watch_available_dates
 from app.logger import get_logs
 from app.notifier import send_watch_registration_email
@@ -94,6 +102,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BookMyShow Theatre Watcher", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ─────────────────────────── HTML pages ──────────────────────────────────────
@@ -496,9 +512,10 @@ async def create_watch(payload: WatchCreateRequest):
         language = (payload.language or "english").strip().lower()
         city = "Chennai"
         # Build a synthetic API URL — will be stored as job["url"]
+        today_ist_code = datetime.now(IST_TZ).strftime("%Y%m%d")
         url_str = _build_bms_url_from_parts(
             ref_event_code, et_codes, language,
-            (payload.start_date or "").replace("-", "") or "20261217"
+            (payload.start_date or "").replace("-", "") or today_ist_code
         )
     else:
         raise HTTPException(
@@ -551,7 +568,7 @@ async def create_watch(payload: WatchCreateRequest):
         try:
             release_dt = datetime.strptime(release_date_8digit, "%Y%m%d").date()
             preview_dt = release_dt - timedelta(days=1)
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(IST_TZ).date()
             preview_code = preview_dt.strftime("%Y%m%d")
             if preview_dt >= today and preview_code not in date_codes_to_fetch:
                 date_codes_to_fetch = sorted(set(date_codes_to_fetch) | {preview_code})

@@ -1,7 +1,16 @@
 import os
+from datetime import timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
+CORS_ORIGINS_RAW = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000",
+)
+CORS_ORIGINS = [orig.strip() for orig in CORS_ORIGINS_RAW.split(",") if orig.strip()]
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "bms_watcher")

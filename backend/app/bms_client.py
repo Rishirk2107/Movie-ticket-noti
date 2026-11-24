@@ -176,13 +176,23 @@ def parse_venues_and_dates(payload: dict) -> tuple[dict[str, str], list[str]]:
             continue
         for group in widget.get("data", []):
             for item in group.get("data", []):
-                if item.get("type") != "venue-card":
+                item_type = item.get("type")
+                if item_type not in ("venue-card", "venueCard"):
                     continue
-                extra = item.get("additionalData", {})
-                code = extra.get("venueCode") or item.get("id")
-                name = extra.get("venueName") or code
+                extra = item.get("additionalData", {}) or {}
+                code = (
+                    extra.get("venueCode")
+                    or item.get("venueCode")
+                    or item.get("id")
+                )
+                name = (
+                    extra.get("venueName")
+                    or item.get("venueName")
+                    or item.get("name")
+                    or code
+                )
                 if code:
-                    venues[code] = name
+                    venues[str(code)] = str(name)
 
     return venues, available_dates
 
