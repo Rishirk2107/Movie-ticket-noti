@@ -50,3 +50,23 @@ async def record_venues_and_get_new(
             newly_added.append((code, name))
 
     return newly_added
+
+
+async def update_watch_available_dates(
+    watches_col,
+    watch_id: str,
+    new_dates: list[str],
+) -> None:
+    """
+    Merge new_dates (list of YYYYMMDD strings) into the watch document's
+    available_dates array. Also stamps dates_updated_at.
+    """
+    if not new_dates:
+        return
+    await watches_col.update_one(
+        {"_id": watch_id},
+        {
+            "$addToSet": {"available_dates": {"$each": new_dates}},
+            "$set": {"dates_updated_at": datetime.now(timezone.utc).isoformat()},
+        },
+    )

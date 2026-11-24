@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BMS Watcher — Create Watch</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 20px 16px 60px;
+      color: #1f2937;
+      background: #f3f4f6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Top Nav ── */
+    .topnav {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 10px;
+    }
+    .topnav-brand { display: flex; align-items: center; gap: 10px; }
+    .topnav-brand .logo {
+      width: 32px; height: 32px; background: #dc2626; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-weight: 800; font-size: 15px;
+    }
+    .topnav-brand h1 { margin: 0; font-size: 17px; font-weight: 700; color: #111827; }
+    .topnav-brand h1 span { color: #dc2626; }
+    .back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      background: transparent; border: 1px solid #d1d5db;
+      color: #374151; border-radius: 7px; font-size: 12px; font-weight: 600;
+      text-decoration: none; transition: background .15s;
+    }
+    .back-btn:hover { background: #f9fafb; }
+
+    /* ── Cards / Sections ── */
+    .card {
+      background: #fff; border: 1px solid #e5e7eb;
+      border-radius: 12px; padding: 22px 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.05);
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 15px; font-weight: 700; color: #111827;
+      margin: 0 0 18px; display: flex; align-items: center; gap: 8px;
+    }
+    .step-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #dc2626; color: #fff; font-size: 11px; font-weight: 700;
+    }
+
+    /* ── Form elements ── */
+    label {
+      display: block; font-weight: 600; margin-top: 14px; margin-bottom: 5px;
+      font-size: 12px; color: #374151;
+    }
+    label .req { color: #dc2626; margin-left: 2px; }
+    label .hint { font-weight: 400; color: #9ca3af; font-size: 11px; margin-left: 4px; }
+    input[type="text"], input[type="email"], input[type="number"],
+    input[type="date"], select, textarea {
+      width: 100%; padding: 9px 11px;
+      border: 1px solid #d1d5db; border-radius: 7px;
+      font-size: 13px; outline: none; background: #fff;
+      transition: border-color .15s, box-shadow .15s;
+      color: #111827;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: #dc2626; box-shadow: 0 0 0 2px #fee2e2;
+    }
+    input:disabled, select:disabled { background: #f9fafb; color: #9ca3af; }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    @media (max-width: 540px) {
+      .row { flex-direction: column; gap: 0; }
+    }
+
+    /* ── Movie grid ── */
+    .movie-search-wrap {
+      position: relative; margin-bottom: 10px;
+    }
+    .movie-search-wrap input {
+      padding-left: 34px;
+    }
+    .movie-search-wrap .search-icon {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: #9ca3af; font-size: 14px; pointer-events: none;
+    }
+    .movies-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+      max-height: 320px; overflow-y: auto;
+      padding: 2px;
+    }
+    .movies-grid::-webkit-scrollbar { width: 5px; }
+    .movies-grid::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+
+    .movie-tile {
+      background: #fff; border: 2px solid #e5e7eb; border-radius: 10px;
+      cursor: pointer; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+      text-align: center;
+    }
+    .movie-tile:hover { border-color: #fca5a5; box-shadow: 0 2px 8px rgba(220,38,38,.12); }
+    .movie-tile.selected { border-color: #dc2626; box-shadow: 0 0 0 3px #fee2e2; }
+    .movie-tile img {
+      width: 100%; aspect-ratio: 2/3; object-fit: cover;
+      display: block; background: #f3f4f6;
+    }
+    .movie-tile .tile-title {
+      font-size: 11px; font-weight: 600; padding: 6px 6px;
+      color: #111827; line-height: 1.3;
+    }
+    .movie-tile .tile-lang {
+      font-size: 10px; color: #6b7280; padding-bottom: 6px;
+    }
+    .movies-loading {
+      text-align: center; padding: 24px 0; color: #9ca3af; font-size: 12px;
+    }
+    .movies-error {
+      padding: 12px; background: #fff7ed; border: 1px solid #fed7aa;
+      border-radius: 7px; font-size: 12px; color: #9a3412;
+    }
+
+    /* Manual event code toggle */
+    .manual-toggle {
+      font-size: 12px; color: #6b7280; cursor: pointer;
+      text-decoration: underline; margin-top: 8px; display: inline-block;
+    }
+    .manual-toggle:hover { color: #dc2626; }
+
+    /* ── Format selector ── */
+    .format-grid {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;
+    }
+    .fmt-chip {
+      padding: 6px 13px; border-radius: 20px;
+      border: 1.5px solid #e5e7eb; background: #f9fafb;
+      font-size: 12px; color: #374151; cursor: pointer;
+      transition: all .15s;
+    }
+    .fmt-chip:hover { border-color: #fca5a5; background: #fff1f2; }
+    .fmt-chip.selected { border-color: #dc2626; background: #fef2f2; color: #dc2626; font-weight: 600; }
+
+    /* ── Email chips ── */
+    .chips-container {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 7px;
+      min-height: 42px; cursor: text; background: #fff; transition: border-color .15s;
+    }
+    .chips-container:focus-within { border-color: #dc2626; box-shadow: 0 0 0 2px #fee2e2; }
+    .chip {
+      display: inline-flex; align-items: center;
+      background: #fee2e2; color: #991b1b;
+      font-size: 11px; font-weight: 500;
+      padding: 3px 8px; border-radius: 14px; border: 1px solid #fecaca;
+    }
+    .chip .rm { margin-left: 5px; cursor: pointer; color: #ef4444; font-size: 14px; line-height: 1; }
+    .chip .rm:hover { color: #7f1d1d; }
+    .chips-container input {
+      border: none !important; outline: none !important; box-shadow: none !important;
+      padding: 3px 4px !important; flex: 1; min-width: 140px; font-size: 12px;
+    }
+
+    /* ── Date preview toggle ── */
+    .preview-toggle {
+      display: flex; align-items: center; gap: 8px; margin-top: 10px;
+    }
+    .toggle-sw {
+      position: relative; display: inline-block; width: 36px; height: 20px;
+    }
+    .toggle-sw input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #d1d5db; border-radius: 20px; transition: background .2s;
+    }
+    .toggle-track::before {
+      content: ''; position: absolute; left: 3px; top: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; transition: transform .2s;
+    }
+    .toggle-sw input:checked + .toggle-track { background: #dc2626; }
+    .toggle-sw input:checked + .toggle-track::before { transform: translateX(16px); }
+    .preview-label { font-size: 12px; color: #374151; font-weight: 500; }
+    .preview-info { font-size: 11px; color: #9ca3af; }
+
+    /* ── Submit button ── */
+    .submit-btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px 24px;
+      background: #dc2626; color: #fff; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      margin-top: 20px; transition: background .15s;
+    }
+    .submit-btn:hover:not(:disabled) { background: #b91c1c; }
+    .submit-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+    .spinner {
+      width: 15px; height: 15px; border: 2.5px solid rgba(255,255,255,.5);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .7s linear infinite; display: none;
+    }
+    .submit-btn.loading .spinner { display: inline-block; }
+    .submit-btn.loading .btn-text { opacity: .7; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Alert banners ── */
+    .alert {
+      padding: 11px 14px; border-radius: 8px; font-size: 12px;
+      margin-top: 14px; display: none;
+    }
+    .alert.show { display: block; }
+    .alert-success { background: #dcfce7; border: 1px solid #bbf7d0; color: #166534; }
+    .alert-error   { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+
+    /* Release info box */
+    .release-info {
+      display: none; margin-top: 10px;
+      background: #eff6ff; border: 1px solid #bfdbfe;
+      border-radius: 7px; padding: 10px 12px; font-size: 12px; color: #1e40af;
+    }
+    .release-info.show { display: block; }
+    .release-info strong { font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-brand">
+    <div class="logo">BM</div>
+    <h1>BMS <span>Watcher</span></h1>
+  </div>
+  <a href="/" class="back-btn">← Active Watches</a>
+</nav>
+
+<!-- Step 1: Pick Movie -->
+<div class="card">
+  <div class="card-title"><span class="step-badge">1</span> Pick a Movie</div>
+
+  <div class="movie-search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="movieSearch" placeholder="Search movies in Chennai…" oninput="filterMovies()" />
+  </div>
+  <div class="movies-grid" id="moviesGrid">
+    <div class="movies-loading">Loading movies from BookMyShow…</div>
+  </div>
+
+  <div>
+    <span class="manual-toggle" onclick="toggleManual()">Or enter Event Code manually</span>
+  </div>
+  <div id="manualEventWrap" style="display:none;margin-top:10px;">
+    <label>Event Code <span class="req">*</span> <span class="hint">(e.g. ET00524518)</span></label>
+    <input type="text" id="manualEventCode" placeholder="ET00524518" oninput="onManualCodeChange()" />
+  </div>
+</div>
+
+<!-- Step 2: Format / Language -->
+<div class="card" id="step2Card" style="opacity:.4;pointer-events:none;">
+  <div class="card-title"><span class="step-badge">2</span> Choose Language & Format</div>
+
+  <div class="release-info" id="releaseInfoBox"></div>
+
+  <div id="formatsWrap">
+    <div class="movies-loading" style="display:none;" id="formatsLoading">Loading options…</div>
+    <div class="format-grid" id="formatGrid"></div>
+    <div id="formatsError" class="movies-error" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- Step 3: Dates, Interval, Emails -->
+<div class="card" id="step3Card" style="opacity:.4;pointer-events:none;">
+  <div class="card-title"><span class="step-badge">3</span> Configure Watch</div>
+
+  <label>Label <span class="req">*</span></label>
+  <input type="text" id="labelInput" placeholder="e.g. Interstellar IMAX Chennai" />
+
+  <div class="row">
+    <div>
+      <label>Start Date <span class="req">*</span></label>
+      <input type="date" id="startDate" onchange="onStartDateChange()" />
+    </div>
+    <div>
+      <label>End Date</label>
+      <input type="date" id="endDate" />
+    </div>
+  </div>
+
+  <div class="preview-toggle">
+    <label class="toggle-sw">
+      <input type="checkbox" id="previewToggle" onchange="onPreviewToggleChange()" />
+      <span class="toggle-track"></span>
+    </label>
+    <span class="preview-label">Include day-before preview (releaseDate − 1)</span>
+  </div>
+  <div class="preview-info" id="previewInfo"></div>
+
+  <label>Check Interval (minutes)</label>
+  <input type="number" id="intervalInput" value="10" min="1" max="1440" />
+
+  <label>Alert Emails <span class="hint">(press Enter or comma to add)</span></label>
+  <div class="chips-container" id="chipsContainer" onclick="document.getElementById('emailRaw').focus()">
+    <input type="text" id="emailRaw" placeholder="email@example.com" />
+  </div>
+
+  <button class="submit-btn" id="submitBtn" onclick="submitWatch()">
+    <span class="spinner"></span>
+    <span class="btn-text">Start Watching</span>
+  </button>
+  <div class="alert alert-success" id="alertSuccess"></div>
+  <div class="alert alert-error" id="alertError"></div>
+</div>
+
+<script>
+  // ═══════════════════════════════════════════════════════════
+  //  State
+  // ═══════════════════════════════════════════════════════════
+  let allMovies = [];
+  let selectedEventCode = '';     // the ref event code
+  let selectedEtCode = '*';       // etCodes for the chosen format
+  let selectedLanguage = 'english';
+  let selectedFormatLabel = '';
+  let releaseDate8 = '';          // YYYYMMDD
+  let releaseDateISO = '';        // YYYY-MM-DD
+  let emails = [];
+  let manualMode = false;
+
+  // ═══════════════════════════════════════════════════════════
+  //  IST date helpers (no UTC shift)
+  // ═══════════════════════════════════════════════════════════
+  function todayIST() {
+    // Approximate IST by using UTC+5:30
+    const now = new Date();
+    const ist = new Date(now.getTime() + (5 * 60 + 30) * 60000);
+    const y = ist.getUTCFullYear();
+    const m = String(ist.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(ist.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  function localDate(isoStr) {
+    if (!isoStr) return null;
+    const [y, m, d] = isoStr.split('-').map(Number);
+    return new Date(Number(y), Number(m) - 1, Number(d));
+  }
+  function addDays(isoStr, n) {
+    const dt = localDate(isoStr);
+    dt.setDate(dt.getDate() + n);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  function fmt8to4(d8) {
+    if (!d8 || d8.length < 8) return d8;
+    return `${d8.slice(0,4)}-${d8.slice(4,6)}-${d8.slice(6,8)}`;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Step 1 — Movies
+  // ═══════════════════════════════════════════════════════════
+  async function loadMovies() {
+    try {
+      const r = await fetch('/api/bms/movies');
+      const data = await r.json();
+      allMovies = data.movies || [];
+      renderMovies(allMovies);
+    } catch (e) {
+      document.getElementById('moviesGrid').innerHTML =
+        `<div class="movies-error" style="grid-column:1/-1;">Could not load movies. <span class="manual-toggle" onclick="toggleManual()">Use manual entry instead.</span></div>`;
+    }
+  }
+
+  function filterMovies() {
+    const q = (document.getElementById('movieSearch').value || '').toLowerCase();
+    renderMovies(q ? allMovies.filter(m => (m.title||'').toLowerCase().includes(q)) : allMovies);
+  }
+
+  function renderMovies(list) {
+    const grid = document.getElementById('moviesGrid');
+    if (!list.length) {
+      grid.innerHTML = '<div class="movies-loading" style="grid-column:1/-1;">No movies found.</div>';
+      return;
+    }
+    grid.innerHTML = list.map(m => `
+      <div class="movie-tile ${selectedEventCode === m.event_code ? 'selected' : ''}"
+           onclick="selectMovie('${escJs(m.event_code)}', '${escJs(m.title)}')">
+        <img src="${escHtml(m.poster || '')}" alt="${escHtml(m.title)}"
+             onerror="this.style.background='#f3f4f6';this.src=''" />
+        <div class="tile-title">${escHtml(m.title)}</div>
+        <div class="tile-lang">${escHtml(m.language || m.genre || '')}</div>
+      </div>
+    `).join('');
+  }
+
+  function selectMovie(ec, title) {
+    selectedEventCode = ec;
+    document.getElementById('labelInput').value = title;
+    renderMovies(allMovies.filter(m => {
+      const q = (document.getElementById('movieSearch').value || '').toLowerCase();
+      return !q || (m.title||'').toLowerCase().includes(q);
+    }));
+    loadSynopsis(ec);
+  }
+
+  function toggleManual() {
+    manualMode = !manualMode;
+    document.getElementById('manualEventWrap').style.display = manualMode ? 'block' : 'none';
+  }
+
+  function onManualCodeChange() {
+    const ec = (document.getElementById('manualEventCode').value || '').trim();
+    if (/^ET\d{8}$/i.test(ec)) {
+      selectedEventCode = ec.toUpperCase();
+      loadSynopsis(selectedEventCode);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Step 2 — Synopsis / Formats
+  // ═══════════════════════════════════════════════════════════
+  async function loadSynopsis(ec) {
+    // Unlock step 2
+    document.getElementById('step2Card').style.opacity = '1';
+    document.getElementById('step2Card').style.pointerEvents = '';
+    document.getElementById('formatsLoading').style.display = 'block';
+    document.getElementById('formatGrid').innerHTML = '';
+    document.getElementById('formatsError').style.display = 'none';
+    document.getElementById('releaseInfoBox').classList.remove('show');
+    releaseDate8 = ''; releaseDateISO = '';
+    updatePreviewInfo();
+
+    try {
+      const r = await fetch(`/api/bms/synopsis?eventcode=${encodeURIComponent(ec)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+
+      // Update label if needed
+      if (data.movie_name && (!document.getElementById('labelInput').value || document.getElementById('labelInput').value === ec)) {
+        document.getElementById('labelInput').value = data.movie_name;
+      }
+
+      // Release & opening info
+      const effectiveStartDate = data.opening_date_iso || data.release_date_iso;
+      if (effectiveStartDate) {
+        releaseDateISO = data.release_date_iso || effectiveStartDate;
+        releaseDate8 = data.release_date_8digit || effectiveStartDate.replace(/-/g, '');
+        const box = document.getElementById('releaseInfoBox');
+        let infoHtml = '';
+        if (data.opening_date_iso && data.release_date_iso && data.opening_date_iso < data.release_date_iso) {
+          infoHtml = `<strong>Opening Date:</strong> ${data.opening_date_iso} <span style="background:#fee2e2;color:#991b1b;padding:2px 7px;border-radius:4px;font-weight:600;font-size:11px;">Early Screenings</span> &nbsp;·&nbsp; <strong>Wide Release:</strong> ${data.release_date_iso}`;
+        } else if (data.opening_date_iso) {
+          infoHtml = `<strong>Opening Date:</strong> ${data.opening_date_iso}`;
+        } else {
+          infoHtml = `<strong>Release Date:</strong> ${data.release_date_iso}`;
+        }
+        if (data.movie_name) {
+          infoHtml += ` &nbsp;·&nbsp; <strong>${escHtml(data.movie_name)}</strong>`;
+        }
+        box.innerHTML = infoHtml;
+        box.classList.add('show');
+
+        // Set start date to the earliest opening date
+        document.getElementById('startDate').value = effectiveStartDate;
+        onStartDateChange();
+        updatePreviewInfo();
+      } else if (data.movie_name) {
+        const box = document.getElementById('releaseInfoBox');
+        box.innerHTML = `<strong>${escHtml(data.movie_name)}</strong> &nbsp;·&nbsp; <span style="color:#2563eb;">Pre-booking watch (alert when tickets go live)</span>`;
+        box.classList.add('show');
+      }
+
+      // Format chips
+      document.getElementById('formatsLoading').style.display = 'none';
+      const opts = data.options || [];
+      if (!opts.length) {
+        document.getElementById('formatsError').textContent = 'No booking options available yet. Try another movie or check back later.';
+        document.getElementById('formatsError').style.display = 'block';
+        return;
+      }
+
+      // Deduplicate by label
+      const seen = new Set();
+      const unique = opts.filter(o => { const k = o.label; if (seen.has(k)) return false; seen.add(k); return true; });
+      document.getElementById('formatGrid').innerHTML = unique.map((o, i) =>
+        `<div class="fmt-chip ${i===0?'selected':''}"
+              onclick="selectFormat(this, '${escJs(o.ref_event_code||o.event_code)}', '${escJs(o.language)}', '${escJs(o.event_code)}', '${escJs(o.label)}')"
+              >${escHtml(o.label)}</div>`
+      ).join('');
+
+      // Auto-select first
+      if (unique.length) {
+        const first = unique[0];
+        selectedEtCode = first.event_code || '*';
+        selectedLanguage = (first.language || 'english').toLowerCase();
+        selectedEventCode = first.ref_event_code || first.event_code || ec;
+        selectedFormatLabel = first.label;
+      }
+
+      // Unlock step 3
+      document.getElementById('step3Card').style.opacity = '1';
+      document.getElementById('step3Card').style.pointerEvents = '';
+
+    } catch (e) {
+      document.getElementById('formatsLoading').style.display = 'none';
+      document.getElementById('formatsError').textContent = `Could not load options: ${e}`;
+      document.getElementById('formatsError').style.display = 'block';
+    }
+  }
+
+  function selectFormat(el, refEc, lang, etCode, label) {
+    document.querySelectorAll('.fmt-chip').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedEventCode = refEc || etCode;
+    selectedLanguage = (lang || 'english').toLowerCase();
+    selectedEtCode = etCode || '*';
+    selectedFormatLabel = label;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Step 3 — Dates / config
+  // ═══════════════════════════════════════════════════════════
+  function onStartDateChange() {
+    const sv = document.getElementById('startDate').value;
+    if (!sv) return;
+    const maxIso = addDays(sv, 14);
+    document.getElementById('endDate').min = sv;
+    document.getElementById('endDate').max = maxIso;
+    const ev = document.getElementById('endDate').value;
+    if (!ev || ev < sv || ev > maxIso) {
+      document.getElementById('endDate').value = sv;
+    }
+    updatePreviewInfo();
+  }
+
+  function updatePreviewInfo() {
+    const info = document.getElementById('previewInfo');
+    if (!releaseDate8 || releaseDate8.length < 8) { info.textContent = ''; return; }
+    const previewISO = addDays(fmt8to4(releaseDate8), -1);
+    info.textContent = `Preview date: ${previewISO} (the day before wide release)`;
+  }
+
+  function onPreviewToggleChange() {
+    const chk = document.getElementById('previewToggle').checked;
+    if (chk && releaseDate8 && releaseDate8.length >= 8) {
+      const prevDate = addDays(fmt8to4(releaseDate8), -1);
+      const currStart = document.getElementById('startDate').value;
+      if (!currStart || prevDate < currStart) {
+        document.getElementById('startDate').value = prevDate;
+        onStartDateChange();
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Email chips
+  // ═══════════════════════════════════════════════════════════
+  document.getElementById('emailRaw').addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addEmail(); }
+    if (e.key === 'Backspace' && !e.target.value && emails.length) removeEmail(emails.length - 1);
+  });
+  document.getElementById('emailRaw').addEventListener('blur', addEmail);
+
+  function addEmail() {
+    const raw = document.getElementById('emailRaw').value.trim().replace(/,$/,'');
+    if (!raw) return;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw) && !emails.includes(raw)) {
+      emails.push(raw);
+      renderChips();
+    }
+    document.getElementById('emailRaw').value = '';
+  }
+  function removeEmail(idx) {
+    emails.splice(idx, 1);
+    renderChips();
+  }
+  function renderChips() {
+    const container = document.getElementById('chipsContainer');
+    // Remove old chips
+    container.querySelectorAll('.chip').forEach(c => c.remove());
+    const rawInput = document.getElementById('emailRaw');
+    emails.forEach((e, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.innerHTML = `${escHtml(e)}<span class="rm" onclick="removeEmail(${i})">×</span>`;
+      container.insertBefore(chip, rawInput);
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Submit
+  // ═══════════════════════════════════════════════════════════
+  async function submitWatch() {
+    hideAlerts();
+    const label = document.getElementById('labelInput').value.trim();
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    const interval = parseInt(document.getElementById('intervalInput').value) || 10;
+    const includePreview = document.getElementById('previewToggle').checked;
+
+    if (!label) return showError('Label is required.');
+    if (!selectedEventCode) return showError('Please select a movie and format first.');
+    if (!startDate) return showError('Start date is required.');
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true; btn.classList.add('loading');
+    btn.querySelector('.btn-text').textContent = 'Setting up watch…';
+
+    // Finish any pending email
+    addEmail();
+
+    const body = {
+      ref_event_code: selectedEventCode,
+      et_codes: selectedEtCode,
+      language: selectedLanguage,
+      label,
+      start_date: startDate,
+      end_date: endDate || startDate,
+      interval_minutes: interval,
+      emails: [...emails],
+      include_preview: includePreview,
+    };
+
+    try {
+      const r = await fetch('/watches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const msg = data.detail || JSON.stringify(data);
+        throw new Error(msg);
+      }
+      showSuccess(`Watch created! ID: ${data._id} · ${data.known_venue_count} venues already found.`);
+      // After short delay, go to home
+      setTimeout(() => { window.location.href = '/'; }, 2200);
+    } catch (e) {
+      showError(`Failed to create watch: ${e.message || e}`);
+      btn.disabled = false; btn.classList.remove('loading');
+      btn.querySelector('.btn-text').textContent = 'Start Watching';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  Utilities
+  // ═══════════════════════════════════════════════════════════
+  function showSuccess(msg) {
+    const el = document.getElementById('alertSuccess');
+    el.textContent = msg; el.classList.add('show');
+  }
+  function showError(msg) {
+    const el = document.getElementById('alertError');
+    el.textContent = msg; el.classList.add('show');
+  }
+  function hideAlerts() {
+    document.getElementById('alertSuccess').classList.remove('show');
+    document.getElementById('alertError').classList.remove('show');
+  }
+  function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function escJs(s) {
+    return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  }
+
+  // ── Init ──
+  document.getElementById('startDate').min = todayIST();
+  document.getElementById('endDate').min = todayIST();
+  loadMovies();
+</script>
+</body>
+</html>

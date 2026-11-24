@@ -16,6 +16,9 @@ API_BASE_URL = (
     "https://in.bookmyshow.com/api/movies-data/v5/showtimes-by-event/primary-dynamic"
 )
 
+SYNOPSIS_API_URL = "https://in.bookmyshow.com/api/movies/v1/synopsis/init/dynamic"
+SYNOPSIS_STATIC_API_URL = "https://in.bookmyshow.com/api/movies/v1/synopsis/init/static"
+
 DEFAULT_HEADERS = {
     "x-app-code": "WEB",
     "x-region-code": "CHEN",
