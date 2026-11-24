@@ -109,6 +109,13 @@ def build_api_url(raw_url: str, date_code: str | None = None) -> tuple[str, str]
     qs = parse_qs(parsed.query)
 
     if "/api/movies-data/" in parsed.path and "showtimes-by-event" in parsed.path:
+        if date_code:
+            qs["dateCode"] = [str(date_code).strip()]
+            new_query = urllib.parse.urlencode(qs, doseq=True)
+            active_url = urllib.parse.urlunparse(
+                (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+            )
+            return active_url, "https://in.bookmyshow.com/"
         return raw_url, "https://in.bookmyshow.com/"
 
     info = extract_url_info(raw_url)
@@ -176,25 +183,61 @@ def parse_venues_and_dates(payload: dict) -> tuple[dict[str, str], list[str]]:
             continue
         for group in widget.get("data", []):
             for item in group.get("data", []):
-                if item.get("type") != "venue-card":
+                item_type = item.get("type")
+                if item_type not in ("venue-card", "venueCard"):
                     continue
-                extra = item.get("additionalData", {})
-                code = extra.get("venueCode") or item.get("id")
-                name = extra.get("venueName") or code
+                extra = item.get("additionalData", {}) or {}
+                code = (
+                    extra.get("venueCode")
+                    or item.get("venueCode")
+                    or item.get("id")
+                )
+                name = (
+                    extra.get("venueName")
+                    or item.get("venueName")
+                    or item.get("name")
+                    or code
+                )
                 if code:
-                    venues[code] = name
+                    venues[str(code)] = str(name)
 
     return venues, available_dates
 
 
-def _is_bms_autosnapped(payload: dict) -> bool:
-    """Return True if BMS redirected us to a different date than requested."""
-    title = (
-        payload.get("data", {})
-        .get("toast", {})
-        .get("title", "")
-    )
-    return "date has been changed" in title.lower()
+def _is_bms_autosnapped(payload: dict, requested_date_code: str | None = None) -> tuple[bool, str]:
+    r"""
+    Check if BMS redirected/auto-snapped to a different date than requested.
+    Returns:
+      (is_snapped: bool, reason: str)
+
+    Criteria for auto-snap:
+    1. Toast title in data.toast or metadata.toast explicitly contains
+       "date has been changed" (case-insensitive).
+    2. When requested_date_code is provided and non-empty:
+       returned_date_code (from data.additionalData.dateCode) is a valid 8-digit string
+       (re.fullmatch(r"^\d{8}$", returned_date_code)) that explicitly differs from
+       the normalized requested_date_code.
+    """
+    req_norm = str(requested_date_code).strip() if requested_date_code is not None else ""
+
+    # Check toast in data.toast and metadata.toast
+    toast_titles = [
+        str(payload.get("data", {}).get("toast", {}).get("title", "")).strip(),
+        str(payload.get("metadata", {}).get("toast", {}).get("title", "")).strip(),
+    ]
+    for title in toast_titles:
+        if title and "date has been changed" in title.lower():
+            return True, f'toast="{title}"'
+
+    # Check dateCode in additionalData
+    if req_norm:
+        raw_ret = payload.get("data", {}).get("additionalData", {}).get("dateCode")
+        ret_norm = str(raw_ret).strip() if raw_ret is not None else ""
+        if ret_norm and re.fullmatch(r"^\d{8}$", ret_norm):
+            if ret_norm != req_norm:
+                return True, f"requested={req_norm} vs returned={ret_norm}"
+
+    return False, ""
 
 
 async def fetch_synopsis(
@@ -381,10 +424,11 @@ async def fetch_venues_direct(
                     raise RuntimeError(f"Non-JSON response ({exc}): {snippet}") from exc
 
                 # Detect BMS auto-snap: BMS served data for a *different* date
-                if _is_bms_autosnapped(payload):
+                is_snapped, snap_reason = _is_bms_autosnapped(payload, requested_date_code=date_code)
+                if is_snapped:
                     add_log(
                         "WARN",
-                        f"BMS auto-snapped date {date_code} to another date — skipping this dateCode",
+                        f"BMS auto-snapped date {date_code} to another date ({snap_reason}) — skipping this dateCode",
                     )
                     return {}, []
 

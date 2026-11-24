@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from curl_cffi.requests import AsyncSession
 
 from app.bms_client import fetch_venues_direct, replace_url_date
+from app.config import IST_TZ
 from app.db import record_venues_and_get_new, update_watch_available_dates
 from app.logger import add_log
 from app.notifier import notify_new_venues
@@ -54,7 +55,7 @@ def get_poll_date_codes(job: dict) -> list[str]:
         try:
             release_dt = datetime.strptime(release_8digit, "%Y%m%d").date()
             preview_dt = release_dt - timedelta(days=1)
-            today_ist = datetime.now(timezone.utc).date()
+            today_ist = datetime.now(IST_TZ).date()
             preview_code = preview_dt.strftime("%Y%m%d")
             if preview_dt >= today_ist and preview_code not in date_set:
                 date_set.add(preview_code)
@@ -75,7 +76,7 @@ def is_watch_expired(job: dict) -> bool:
         return False
     try:
         end_dt = datetime.strptime(end, "%Y-%m-%d").date()
-        today = datetime.now(timezone.utc).date()   # UTC (no tzdata needed)
+        today = datetime.now(IST_TZ).date()
         return today > end_dt
     except Exception:
         return False
