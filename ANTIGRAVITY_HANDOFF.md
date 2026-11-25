@@ -17,28 +17,6 @@ Movie-ticket-noti/
 ├── README.md
 ├── ANTIGRAVITY_HANDOFF.md             <-- Technical handoff report (this document)
 │
-├── frontend/                          <-- Vite + React SPA Frontend
-│   ├── package.json                   <-- React 19, React Router v7, Vite dependencies
-│   ├── vite.config.js                 <-- Vite dev server with reverse-proxy to backend (:8000)
-│   ├── index.html                     <-- HTML entry point
-│   └── src/
-│       ├── main.jsx                   <-- React entry point
-│       ├── App.jsx                    <-- App shell & React Router route definitions
-│       ├── App.css                    <-- Card-and-chip cinema-red design system
-│       ├── components/
-│       │   ├── Navbar.jsx             <-- Navigation bar with active route pills
-│       │   └── EmailChipInput.jsx     <-- Tag/chip email input with paste/Enter/Backspace
-│       ├── pages/
-│       │   ├── About.jsx              <-- / About & overview with 3-step visual workflow
-│       │   ├── Home.jsx               <-- /movies Movie discovery catalog with language filters
-│       │   ├── ConfigureWatch.jsx     <-- /configure Language/format picker & watch form
-│       │   ├── Watches.jsx            <-- /watches Registered watches dashboard & modal
-│       │   └── Logs.jsx               <-- /logs Live log stream with pause/resume & filters
-│       ├── services/
-│       │   └── api.js                 <-- Centralized API client supporting VITE_API_BASE_URL
-│       └── utils/
-│           └── dateUtils.js           <-- IST (UTC+5:30) & local date math utilities
-│
 └── backend/
     ├── .env                           <-- Environment variables (Mongo, Brevo, ntfy, BMS cookie)
     ├── requirements.txt               <-- Python package dependencies
