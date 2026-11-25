@@ -19,6 +19,7 @@ from app.bms_client import (
     extract_url_info,
     fetch_synopsis,
     fetch_venues_direct,
+    parse_page_cta_from_html,
     parse_release_date,
     parse_venues_and_dates,
     replace_url_date,
@@ -47,6 +48,7 @@ def _build_bms_url_from_parts(
     et_codes: str,
     language: str,
     date_code: str,
+    format_event_code: str | None = None,
 ) -> str:
     """Build a synthetic BMS showtimes API URL from picked movie parts."""
     params = {
@@ -62,6 +64,8 @@ def _build_bms_url_from_parts(
         "language": language.lower(),
         "refEventCode": ref_event_code,
     }
+    if format_event_code:
+        params["formatEventCode"] = format_event_code
     return f"{API_BASE_URL}?{urllib.parse.urlencode(params)}"
 
 
@@ -352,27 +356,54 @@ async def proxy_synopsis(eventcode: str):
             # Parse language + format options from pageCta
             options: list[dict] = []
             page_cta = payload.get("pageCta", []) or []
+            movie_title = meta_event.get("eventName", "")
+            if not page_cta and movie_title:
+                slug = re.sub(r"[^\w\s-]", "", movie_title).strip().lower()
+                slug = re.sub(r"[-\s]+", "-", slug)
+                movie_page_urls = [
+                    f"https://in.bookmyshow.com/movies/chennai/{slug}/{ec_clean}",
+                    f"https://in.bookmyshow.com/movies/chennai/{ec_clean}",
+                ]
+                for p_url in movie_page_urls:
+                    try:
+                        p_resp = await s.get(p_url, headers=headers)
+                        if p_resp.status_code == 200:
+                            page_cta = parse_page_cta_from_html(p_resp.text)
+                            if page_cta:
+                                break
+                    except Exception:
+                        pass
+
             for cta in page_cta:
                 meta = cta.get("meta", {})
                 for opt in meta.get("options", []):
                     lang = opt.get("language", "")
                     formats = opt.get("formats", [])
+                    has_select_all = False
                     for fmt in formats:
                         dim = fmt.get("dimension", "")
+                        ev_code = fmt.get("eventCode", "") or ec_clean
+                        ref_ev_code = fmt.get("refEventCode", "") or ev_code or ec_clean
+                        if dim.lower() == "select all" or ev_code == "*":
+                            has_select_all = True
                         options.append({
                             "language": lang,
                             "dimension": dim,
-                            "event_code": fmt.get("eventCode", "") or ec_clean,
-                            "ref_event_code": fmt.get("refEventCode", "") or ec_clean,
+                            "event_code": ev_code,
+                            "ref_event_code": ref_ev_code,
                             "label": f"{lang} – {dim}",
                         })
-                    # Add "Select all" format option per language (matches BMS UI)
-                    if formats:
+                    if formats and not has_select_all:
+                        first_fmt_ref = (
+                            formats[0].get("refEventCode")
+                            or formats[0].get("eventCode")
+                            or ec_clean
+                        )
                         options.append({
                             "language": lang,
                             "dimension": "Select all",
                             "event_code": "*",
-                            "ref_event_code": ec_clean,
+                            "ref_event_code": first_fmt_ref,
                             "label": f"{lang} – Select all",
                         })
 
@@ -544,7 +575,7 @@ async def create_watch(payload: WatchCreateRequest):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    # ── Synopsis for release date + movie name ──
+    # ── Synopsis for release date + movie name + format options ──
     synopsis = {}
     try:
         synopsis = await fetch_synopsis(ref_event_code)
@@ -553,6 +584,46 @@ async def create_watch(payload: WatchCreateRequest):
 
     release_date_8digit = synopsis.get("release_date_8digit", "")
     movie_name = synopsis.get("movie_name", "") or payload.label
+
+    # ── Resolve format-specific display_event_code for BookMyShow Showtimes URL ──
+    display_event_code = None
+    if et_codes and et_codes != "*":
+        # When et_codes is a specific event code (or comma-separated list of codes, e.g. ET00526306)
+        m = re.search(r"ET\d+", et_codes, re.IGNORECASE)
+        if m:
+            display_event_code = m.group(0).upper()
+    else:
+        # Wildcard "Select all" selected (et_codes == "*"):
+        # Inspect the fetched synopsis options for the selected language and pick the first
+        # non-wildcard format event_code (preferring one that differs from ref_event_code if multiple exist).
+        options = synopsis.get("options", [])
+        lang_opts = [
+            opt for opt in options
+            if (opt.get("language") or "").strip().lower() == language.lower()
+        ] or options
+
+        non_wildcards = [
+            (opt.get("event_code") or "").strip()
+            for opt in lang_opts
+            if (opt.get("event_code") or "").strip() and (opt.get("event_code") or "").strip() != "*"
+        ]
+        # Prefer one differing from ref_event_code
+        diff_codes = [c for c in non_wildcards if c.upper() != ref_event_code.upper()]
+        if diff_codes:
+            display_event_code = diff_codes[0]
+        elif non_wildcards:
+            display_event_code = non_wildcards[0]
+
+    # If ref_event_code was provided (not legacy raw url), rebuild url_str with formatEventCode
+    if payload.ref_event_code:
+        today_ist_code = datetime.now(IST_TZ).strftime("%Y%m%d")
+        url_str = _build_bms_url_from_parts(
+            ref_event_code,
+            et_codes,
+            language,
+            (payload.start_date or "").replace("-", "") or today_ist_code,
+            format_event_code=display_event_code,
+        )
 
     # ── Determine initial date list to baseline ──
     initial_available_dates = synopsis.get("available_dates", [])

@@ -12,10 +12,12 @@ from app.config import (
 def _post_ntfy_sync(title: str, message: str) -> None:
     if not NTFY_TOPIC:
         return
+    # Clean non-ASCII characters from Title header to avoid latin-1 HTTP header encoding error
+    safe_title = title.encode("ascii", "replace").decode("ascii")
     req = urllib.request.Request(
         f"https://ntfy.sh/{NTFY_TOPIC}",
         data=message.encode("utf-8"),
-        headers={"Title": title},
+        headers={"Title": safe_title},
         method="POST",
     )
     try:
@@ -94,11 +96,33 @@ def _format_public_bms_url(raw_url: str, date_code: str = "", movie_name: str = 
     ref_event = (qs.get("refEventCode") or [""])[0].strip()
     et_codes = (qs.get("etCodes") or ["*"])[0].strip()
     language = (qs.get("language") or ["english"])[0].strip().lower()
+    format_event_code = (qs.get("formatEventCode") or [""])[0].strip()
 
-    # Event code in path: prefer et_codes if valid ET code, otherwise ref_event
-    event_code = et_codes if re.match(r"^ET\d+$", et_codes, re.IGNORECASE) else ref_event
-    if not event_code or event_code == "*":
+    # Event code in path:
+    # 1. If et_codes contains a specific ET code (e.g. single ET... or comma-separated list), use the first ET code
+    # 2. Else if format_event_code is provided (e.g. resolved display_event_code when et_codes == "*"), use it
+    # 3. Else fallback to ref_event
+    event_code = ""
+    if et_codes and et_codes != "*":
+        m_et = re.search(r"ET\d+", et_codes, re.IGNORECASE)
+        if m_et:
+            event_code = m_et.group(0).upper()
+
+    if not event_code and format_event_code and format_event_code != "*":
+        m_fmt = re.search(r"ET\d+", format_event_code, re.IGNORECASE)
+        if m_fmt:
+            event_code = m_fmt.group(0).upper()
+
+    if not event_code:
         event_code = ref_event
+
+    # Fallback map for master movie codes whose language format showtimes use dedicated event codes
+    KNOWN_MASTER_SHOWTIME_MAP = {
+        ("ET00439706", "english"): "ET00526306",
+        ("ET00439706", "tamil"): "ET00526312",
+    }
+    if (event_code.upper(), language.lower()) in KNOWN_MASTER_SHOWTIME_MAP:
+        event_code = KNOWN_MASTER_SHOWTIME_MAP[(event_code.upper(), language.lower())]
 
     if not event_code:
         return "https://in.bookmyshow.com/explore/movies-chennai"
@@ -117,12 +141,20 @@ def _format_public_bms_url(raw_url: str, date_code: str = "", movie_name: str = 
         path_parts.append(dc)
 
     out_path = "/" + "/".join(path_parts)
+
+    ref_event_out = ref_event
+    if (ref_event.upper(), language.lower()) in KNOWN_MASTER_SHOWTIME_MAP:
+        ref_event_out = KNOWN_MASTER_SHOWTIME_MAP[(ref_event.upper(), language.lower())]
+    elif not ref_event_out:
+        ref_event_out = event_code
+
     query_params = {
         "etCodes": et_codes or "*",
         "language": language or "english",
-        "refEventCode": ref_event or event_code,
+        "refEventCode": ref_event_out or event_code,
     }
-    return f"https://in.bookmyshow.com{out_path}?{urllib.parse.urlencode(query_params)}"
+    qs_str = urllib.parse.urlencode(query_params, safe="*")
+    return f"https://in.bookmyshow.com{out_path}?{qs_str}"
 
 
 async def notify_new_venues(

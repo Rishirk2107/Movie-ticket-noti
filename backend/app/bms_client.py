@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import urllib.parse
 from datetime import date, datetime
@@ -240,6 +241,51 @@ def _is_bms_autosnapped(payload: dict, requested_date_code: str | None = None) -
     return False, ""
 
 
+def parse_page_cta_from_html(html: str) -> list[dict]:
+    """Extract pageCta JSON array from BookMyShow movie page HTML."""
+    pos = html.find('"primaryCta"')
+    if pos == -1:
+        return []
+    cta_start = html.rfind('"pageCta":', 0, pos)
+    if cta_start == -1:
+        return []
+    array_start = html.find('[', cta_start)
+    if array_start == -1:
+        return []
+
+    depth = 0
+    in_string = False
+    escape = False
+    array_end = -1
+    for i in range(array_start, len(html)):
+        ch = html[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    array_end = i + 1
+                    break
+
+    if array_end != -1:
+        raw_json = html[array_start:array_end]
+        try:
+            return json.loads(raw_json)
+        except Exception:
+            pass
+    return []
+
+
 async def fetch_synopsis(
     event_code: str,
     session: AsyncSession | None = None,
@@ -337,6 +383,82 @@ async def fetch_synopsis(
                 opening_date_8digit = release_date_8digit
                 opening_date_iso = release_date_iso
                 opening_date_str = release_date_str
+            # Parse language + format options from pageCta
+            options: list[dict] = []
+            page_cta = payload.get("pageCta", []) or []
+            if not page_cta and movie_name:
+                slug = re.sub(r"[^\w\s-]", "", movie_name).strip().lower()
+                slug = re.sub(r"[-\s]+", "-", slug)
+                movie_page_urls = [
+                    f"https://in.bookmyshow.com/movies/chennai/{slug}/{ec_clean}",
+                    f"https://in.bookmyshow.com/movies/chennai/{ec_clean}",
+                ]
+                for p_url in movie_page_urls:
+                    try:
+                        p_resp = await s.get(p_url, headers=headers)
+                        if p_resp.status_code == 200:
+                            page_cta = parse_page_cta_from_html(p_resp.text)
+                            if page_cta:
+                                break
+                    except Exception:
+                        pass
+
+            for cta in page_cta:
+                meta = cta.get("meta", {})
+                for opt in meta.get("options", []):
+                    lang = opt.get("language", "")
+                    formats = opt.get("formats", [])
+                    has_select_all = False
+                    for fmt in formats:
+                        dim = fmt.get("dimension", "")
+                        ev_code = fmt.get("eventCode", "") or ec_clean
+                        ref_ev_code = fmt.get("refEventCode", "") or ev_code or ec_clean
+                        if dim.lower() == "select all" or ev_code == "*":
+                            has_select_all = True
+                        options.append({
+                            "language": lang,
+                            "dimension": dim,
+                            "event_code": ev_code,
+                            "ref_event_code": ref_ev_code,
+                            "label": f"{lang} – {dim}",
+                        })
+                    if formats and not has_select_all:
+                        first_fmt_ref = (
+                            formats[0].get("refEventCode")
+                            or formats[0].get("eventCode")
+                            or ec_clean
+                        )
+                        options.append({
+                            "language": lang,
+                            "dimension": "Select all",
+                            "event_code": "*",
+                            "ref_event_code": first_fmt_ref,
+                            "label": f"{lang} – Select all",
+                        })
+
+            if not options and meta_event.get("eventDimension"):
+                dims = [d.strip() for d in meta_event.get("eventDimension", "").split(",") if d.strip()]
+                langs = meta_event.get("eventLanguage", []) or ["English"]
+                if isinstance(langs, str):
+                    langs = [langs]
+                for l in langs:
+                    lang_cap = l.capitalize()
+                    for dim in dims:
+                        options.append({
+                            "language": lang_cap,
+                            "dimension": dim,
+                            "event_code": "*",
+                            "ref_event_code": ec_clean,
+                            "label": f"{lang_cap} – {dim}",
+                        })
+                    options.append({
+                        "language": lang_cap,
+                        "dimension": "Select all",
+                        "event_code": "*",
+                        "ref_event_code": ec_clean,
+                        "label": f"{lang_cap} – Select all",
+                    })
+
             add_log(
                 "INFO",
                 f"Synopsis fetched for {ec_clean}: {movie_name!r}, release={release_date_str!r}, opening={opening_date_str!r}",
@@ -351,6 +473,7 @@ async def fetch_synopsis(
                 "opening_date_iso": opening_date_iso,
                 "opening_date_8digit": opening_date_8digit,
                 "available_dates": available_dates,
+                "options": options,
             }
 
         # Fallback to movie page scraping
