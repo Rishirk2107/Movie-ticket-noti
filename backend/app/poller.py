@@ -108,7 +108,12 @@ async def run_single_watch_check(watches_col, seen_col, job: dict) -> list[tuple
                 if added:
                     target_url = replace_url_date(job["url"], d_code) if d_code else job["url"]
                     await notify_new_venues(
-                        job.get("label"), target_url, job.get("emails", []), added, date_code=d_code
+                        job.get("label"),
+                        target_url,
+                        job.get("emails", []),
+                        added,
+                        date_code=d_code,
+                        movie_name=job.get("movie_name"),
                     )
                     all_added.extend(added)
             except Exception as exc:

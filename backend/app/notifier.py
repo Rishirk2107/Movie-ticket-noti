@@ -65,12 +65,73 @@ async def send_brevo_email(recipients: list[str], subject: str, text_body: str) 
         print(f"[WARN] Brevo email failed: {exc}")
 
 
+import re
+import urllib.parse
+from urllib.parse import parse_qs, urlparse
+
+
+def _slugify(text: str) -> str:
+    """Generate a clean URL slug from a movie name."""
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", (text or "").lower()).strip("-")
+    return s or "movie"
+
+
+def _format_public_bms_url(raw_url: str, date_code: str = "", movie_name: str = "") -> str:
+    """
+    Convert internal BMS API URLs into user-friendly BookMyShow web URLs for emails.
+    Format:
+      https://in.bookmyshow.com/movies/chennai/{slug}/buytickets/{event_code}/{date_code}?etCodes={etCodes}&language={language}&refEventCode={refEventCode}
+    """
+    if not raw_url:
+        return "https://in.bookmyshow.com/explore/movies-chennai"
+
+    if "/api/movies-data/" not in raw_url:
+        return raw_url
+
+    parsed = urlparse(raw_url)
+    qs = parse_qs(parsed.query)
+
+    ref_event = (qs.get("refEventCode") or [""])[0].strip()
+    et_codes = (qs.get("etCodes") or ["*"])[0].strip()
+    language = (qs.get("language") or ["english"])[0].strip().lower()
+
+    # Event code in path: prefer et_codes if valid ET code, otherwise ref_event
+    event_code = et_codes if re.match(r"^ET\d+$", et_codes, re.IGNORECASE) else ref_event
+    if not event_code or event_code == "*":
+        event_code = ref_event
+
+    if not event_code:
+        return "https://in.bookmyshow.com/explore/movies-chennai"
+
+    dc = (date_code or (qs.get("dateCode") or [""])[0]).strip()
+    slug = _slugify(movie_name) if movie_name else ""
+
+    # Path format: /movies/chennai/{slug}/buytickets/{event_code}/{dc}
+    # If slug is absent, fallback to /movies/chennai/{event_code}
+    path_parts = ["movies", "chennai"]
+    if slug and slug != "movie":
+        path_parts.append(slug)
+    path_parts.append("buytickets")
+    path_parts.append(event_code)
+    if dc:
+        path_parts.append(dc)
+
+    out_path = "/" + "/".join(path_parts)
+    query_params = {
+        "etCodes": et_codes or "*",
+        "language": language or "english",
+        "refEventCode": ref_event or event_code,
+    }
+    return f"https://in.bookmyshow.com{out_path}?{urllib.parse.urlencode(query_params)}"
+
+
 async def notify_new_venues(
     label: str | None,
     url: str,
     emails: list[str],
     added: list[tuple[str, str]],
     date_code: str | None = None,
+    movie_name: str | None = None,
 ) -> None:
     if not added:
         return
@@ -82,10 +143,12 @@ async def notify_new_venues(
     
     title = f"New Theatre - {watch_label}{date_formatted}"
     summary = "; ".join(f"{name} ({code})" for code, name in added)
+    m_name = movie_name or (label.split(" - ")[0] if label else "")
+    public_url = _format_public_bms_url(url, date_code=date_code, movie_name=m_name)
     email_body = (
         f"New theatre(s) added for {watch_label}{date_formatted}:\n\n"
         + "\n".join(f"- {name} ({code})" for code, name in added)
-        + f"\n\nShowtimes URL: {url}"
+        + f"\n\nShowtimes URL: {public_url}"
     )
     await send_ntfy_notification(title, summary)
     await send_brevo_email(emails, title, email_body)
@@ -112,6 +175,8 @@ async def send_watch_registration_email(
     else:
         date_str = "Selected date(s)"
 
+    m_name = movie_name or (label.split(" - ")[0] if label else "")
+    public_url = _format_public_bms_url(url, movie_name=m_name)
     subject = f"Notification Alert Set: {label}"
     text_body = (
         f"Hello,\n\n"
@@ -121,7 +186,7 @@ async def send_watch_registration_email(
         f"• Area / City: {city or 'Not specified'}\n"
         f"• Date Range: {date_str}\n"
         f"• Currently Open Theatres: {initial_theatres_count}\n"
-        f"• Showtimes URL: {url}\n\n"
+        f"• Showtimes URL: {public_url}\n\n"
         f"You will receive an instant email whenever new theatres or screens open up for these dates!\n\n"
         f"— BMS Ticket Alerts"
     )
