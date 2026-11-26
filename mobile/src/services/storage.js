@@ -5,6 +5,7 @@ const KEYS = {
   WATCH_ID: '@bms_alarm/watch_id',
   LINKED_STATE: '@bms_alarm/linked_state',
   PENDING_ALARM: '@bms_alarm/pending_alarm',
+  CACHED_WATCHES: '@bms_alarm/cached_watches',
 };
 
 export async function loadSettings() {
@@ -64,5 +65,24 @@ export async function consumePendingAlarm() {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+}
+
+export async function saveCachedWatches(watches) {
+  try {
+    await AsyncStorage.setItem(KEYS.CACHED_WATCHES, JSON.stringify(watches || []));
+  } catch {
+    // Ignore cache write errors
+  }
+}
+
+export async function loadCachedWatches() {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.CACHED_WATCHES);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }

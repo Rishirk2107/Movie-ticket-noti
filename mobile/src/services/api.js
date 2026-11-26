@@ -21,6 +21,12 @@ async function parseApiResponse(res) {
   return json;
 }
 
+export async function fetchWatches(baseUrl) {
+  const url = `${normalizeBaseUrl(baseUrl)}/watches`;
+  const res = await fetch(url, { method: 'GET' });
+  return parseApiResponse(res);
+}
+
 export async function linkDevice(baseUrl, watchId, token) {
   const url = `${normalizeBaseUrl(baseUrl)}/watches/${encodeURIComponent(watchId.trim())}/devices`;
   const res = await fetch(url, {

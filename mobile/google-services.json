@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "121797043764",
+    "project_id": "bms-alarm-58cc0",
+    "storage_bucket": "bms-alarm-58cc0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:121797043764:android:84176bf072236cb9930c61",
+        "android_client_info": {
+          "package_name": "com.rishi.bmsticketalarm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwFSjb1sRvs0bV6mM5deiJxzjiDWbUVeI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
