@@ -1,13 +1,15 @@
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
+import { setAudioModeAsync } from 'expo-audio';
 
 import { savePendingAlarm } from './storage';
 
 export const ALARM_CHANNEL_ID = 'ticket-alarm';
 export const BACKGROUND_NOTIFICATION_TASK = 'BMS_TICKET_ALARM_BACKGROUND_TASK';
+export const ALARM_SOUND_ASSET = require('../../assets/alarm.wav');
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -34,12 +36,10 @@ function parseMaybeJson(value) {
 export function extractAlarmPayload(source) {
   if (!source || typeof source !== 'object') return null;
 
-  // 1. Direct Notification or NotificationResponse object
   const directContentData =
     source.notification?.request?.content?.data ??
     source.request?.content?.data;
 
-  // 2. Background TaskManager data payloads (FCM dataString / nested body)
   const taskBody = source.data?.dataString
     ? parseMaybeJson(source.data.dataString)
     : source.data;
@@ -88,7 +88,7 @@ export async function registerBackgroundNotificationTask() {
   try {
     await Notifications.registerTaskAsync(BACKGROUND_NOTIFICATION_TASK);
   } catch {
-    // Task registration may not be supported in Expo Go; succeeds in dev/EAS builds
+    // Task registration is supported in EAS/development builds
   }
 }
 
@@ -110,7 +110,7 @@ export async function setupAndroidAlarmChannel() {
       },
     });
   } catch {
-    // Fallback for Expo Go where custom native raw sound 'alarm.wav' is not bundled in res/raw
+    // Fallback for Expo Go where custom native raw sound 'alarm.wav' is not in res/raw
     try {
       await Notifications.setNotificationChannelAsync(ALARM_CHANNEL_ID, {
         name: 'Ticket Alarms',
@@ -122,7 +122,7 @@ export async function setupAndroidAlarmChannel() {
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       });
     } catch {
-      // Ignore if channel creation is unavailable in current runtime
+      // Ignore if channel creation is unavailable
     }
   }
 }
@@ -155,4 +155,39 @@ export async function registerForPushNotificationsAsync() {
 
   const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
   return tokenResult.data;
+}
+
+export async function configureAlarmAudioMode() {
+  try {
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+    });
+  } catch {
+    // Proceed even if audio mode configuration is restricted
+  }
+}
+
+export function startLoopingAlarmPlayback(player) {
+  if (!player) return;
+  try {
+    player.loop = true;
+    player.volume = 1.0;
+    player.play();
+  } catch {
+    // Ignore if player is already released
+  }
+  Vibration.vibrate([0, 600, 300], true);
+}
+
+export async function stopLoopingAlarmPlayback(player) {
+  Vibration.cancel();
+  if (!player) return;
+  try {
+    player.pause();
+    await player.seekTo(0);
+  } catch {
+    // Ignore cleanup errors
+  }
 }

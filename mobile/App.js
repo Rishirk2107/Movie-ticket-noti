@@ -3,23 +3,34 @@ import { SafeAreaView, StatusBar as RNStatusBar, StyleSheet, View } from 'react-
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 
-import AlarmScreen from './src/screens/AlarmScreen';
-import WatchLinkerScreen from './src/screens/WatchLinkerScreen';
+import ActiveAlarmOverlay from './src/components/ActiveAlarmOverlay';
+import FloatingDock from './src/components/FloatingDock';
+import { COLORS } from './src/constants/theme';
+import ActivityScreen from './src/screens/ActivityScreen';
+import MoviesScreen from './src/screens/MoviesScreen';
+import WatchesScreen from './src/screens/WatchesScreen';
+import { DEFAULT_BACKEND_URL, getHealth, getWatches } from './src/services/api';
 import {
   extractAlarmPayload,
   registerBackgroundNotificationTask,
   registerForPushNotificationsAsync,
 } from './src/services/notifications';
-import { consumePendingAlarm, loadSettings } from './src/services/storage';
+import {
+  consumePendingAlarm,
+  loadCachedWatches,
+  loadSettings,
+} from './src/services/storage';
 
 export default function App() {
-  const [backendUrl, setBackendUrl] = useState('');
+  const [activeTab, setActiveTab] = useState('movies');
+  const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL);
   const [watchId, setWatchId] = useState('');
-  const [isLinked, setIsLinked] = useState(false);
-
   const [pushToken, setPushToken] = useState('');
   const [tokenError, setTokenError] = useState('');
   const [activeAlarm, setActiveAlarm] = useState(null);
+  const [watchCount, setWatchCount] = useState(0);
+  const [watchesRefreshKey, setWatchesRefreshKey] = useState(0);
+  const [isBackendHealthy, setIsBackendHealthy] = useState(true);
 
   const initPushToken = useCallback(async () => {
     setTokenError('');
@@ -37,14 +48,31 @@ export default function App() {
     async function bootstrap() {
       const saved = await loadSettings();
       if (!mounted) return;
-      setBackendUrl(saved.backendUrl);
+      const resolvedUrl = saved.backendUrl || DEFAULT_BACKEND_URL;
+      setBackendUrl(resolvedUrl);
       setWatchId(saved.watchId);
-      setIsLinked(saved.isLinked);
+
+      const cached = await loadCachedWatches();
+      if (mounted && cached.length > 0) {
+        setWatchCount(cached.length);
+      }
+
+      // Sync initial watch count & health in background for FloatingDock badges
+      getWatches(resolvedUrl)
+        .then((list) => {
+          if (mounted && Array.isArray(list)) {
+            setWatchCount(list.length);
+          }
+        })
+        .catch(() => {});
+
+      getHealth(resolvedUrl)
+        .then(() => mounted && setIsBackendHealthy(true))
+        .catch(() => mounted && setIsBackendHealthy(false));
 
       await registerBackgroundNotificationTask();
       await initPushToken();
 
-      // Check if app launched from a notification tap or background task payload
       const pendingFromBg = await consumePendingAlarm();
       if (mounted && pendingFromBg) {
         setActiveAlarm(pendingFromBg);
@@ -62,16 +90,12 @@ export default function App() {
 
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
       const payload = extractAlarmPayload(notification);
-      if (payload) {
-        setActiveAlarm(payload);
-      }
+      if (payload) setActiveAlarm(payload);
     });
 
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
       const payload = extractAlarmPayload(response);
-      if (payload) {
-        setActiveAlarm(payload);
-      }
+      if (payload) setActiveAlarm(payload);
     });
 
     return () => {
@@ -81,42 +105,74 @@ export default function App() {
     };
   }, [initPushToken]);
 
+  const handleWatchCreated = () => {
+    setWatchesRefreshKey((k) => k + 1);
+    setActiveTab('watches');
+  };
+
   const handleOpenPreview = () => {
     setActiveAlarm({
       watch_id: watchId || 'preview',
       label: 'Preview Alarm - Test Watch',
       date_code: '20261218',
-      venues: [
-        { code: 'TEST', name: 'Test Cinema IMAX' },
-      ],
+      venues: [{ code: 'TEST', name: 'Test Cinema IMAX' }],
       showtimes_url: 'https://in.bookmyshow.com/explore/movies-chennai',
     });
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" backgroundColor="#0b0f19" />
-      <View style={styles.root}>
-        {activeAlarm ? (
-          <AlarmScreen
-            alarmData={activeAlarm}
-            onDismiss={() => setActiveAlarm(null)}
-          />
-        ) : (
-          <WatchLinkerScreen
+      <StatusBar style="light" backgroundColor={COLORS.bgBase} />
+
+      <View style={styles.content}>
+        {activeTab === 'movies' && (
+          <MoviesScreen
             backendUrl={backendUrl}
-            setBackendUrl={setBackendUrl}
+            pushToken={pushToken}
+            onWatchCreated={handleWatchCreated}
+            onOpenActivity={() => setActiveTab('activity')}
+          />
+        )}
+
+        {activeTab === 'watches' && (
+          <WatchesScreen
+            backendUrl={backendUrl}
+            pushToken={pushToken}
+            tokenError={tokenError}
+            refreshTrigger={watchesRefreshKey}
+            onWatchesSynced={setWatchCount}
+            onOpenMovies={() => setActiveTab('movies')}
+          />
+        )}
+
+        {activeTab === 'activity' && (
+          <ActivityScreen
+            backendUrl={backendUrl}
+            onChangeBackendUrl={setBackendUrl}
             watchId={watchId}
-            setWatchId={setWatchId}
-            isLinked={isLinked}
-            setIsLinked={setIsLinked}
+            onChangeWatchId={setWatchId}
             pushToken={pushToken}
             tokenError={tokenError}
             onRetryToken={initPushToken}
-            onOpenTestPreview={handleOpenPreview}
+            onHealthUpdate={setIsBackendHealthy}
+            onWatchesChanged={() => setWatchesRefreshKey((k) => k + 1)}
+            onOpenAlarmPreview={handleOpenPreview}
+            isActive={activeTab === 'activity'}
           />
         )}
       </View>
+
+      <FloatingDock
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        watchCount={watchCount}
+        isBackendHealthy={isBackendHealthy}
+      />
+
+      <ActiveAlarmOverlay
+        alarmData={activeAlarm}
+        onDismiss={() => setActiveAlarm(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -124,11 +180,11 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0b0f19',
+    backgroundColor: COLORS.bgBase,
     paddingTop: RNStatusBar.currentHeight || 0,
   },
-  root: {
+  content: {
     flex: 1,
-    backgroundColor: '#0b0f19',
+    backgroundColor: COLORS.bgBase,
   },
 });

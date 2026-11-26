@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { DEFAULT_BACKEND_URL } from './api';
+
 const KEYS = {
   BACKEND_URL: '@bms_alarm/backend_url',
   WATCH_ID: '@bms_alarm/watch_id',
@@ -22,13 +24,14 @@ export async function loadSettings() {
     } catch {
       linked = false;
     }
+    const savedUrl = (map[KEYS.BACKEND_URL] || '').trim();
     return {
-      backendUrl: map[KEYS.BACKEND_URL] || '',
+      backendUrl: savedUrl || DEFAULT_BACKEND_URL,
       watchId: map[KEYS.WATCH_ID] || '',
       isLinked: Boolean(linked),
     };
   } catch {
-    return { backendUrl: '', watchId: '', isLinked: false };
+    return { backendUrl: DEFAULT_BACKEND_URL, watchId: '', isLinked: false };
   }
 }
 
