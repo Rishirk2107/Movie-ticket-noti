@@ -18,6 +18,11 @@ export default function Watches() {
   // Deletion feedback state
   const [deletingId, setDeletingId] = useState(null)
 
+  // Copy Watch ID & Test Alarm state
+  const [copiedId, setCopiedId] = useState(null)
+  const [testingAlarmId, setTestingAlarmId] = useState(null)
+  const [alarmFeedback, setAlarmFeedback] = useState({})
+
   const fetchWatches = (signal) => {
     setLoading(true)
     setError(null)
@@ -76,6 +81,89 @@ export default function Watches() {
   const handleCloseModal = () => {
     setModalWatch(null)
     setVenues([])
+  }
+
+  const handleCopyWatchId = async (watchId) => {
+    try {
+      await navigator.clipboard.writeText(watchId)
+      setCopiedId(watchId)
+      setTimeout(() => {
+        setCopiedId((prev) => (prev === watchId ? null : prev))
+      }, 2000)
+    } catch {
+      // Fallback for non-HTTPS or restricted clipboard contexts
+      const textarea = document.createElement('textarea')
+      textarea.value = watchId
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      try {
+        document.execCommand('copy')
+        setCopiedId(watchId)
+        setTimeout(() => {
+          setCopiedId((prev) => (prev === watchId ? null : prev))
+        }, 2000)
+      } finally {
+        document.body.removeChild(textarea)
+      }
+    }
+  }
+
+  const handleTestAlarm = async (watchId) => {
+    setTestingAlarmId(watchId)
+    setAlarmFeedback((prev) => {
+      const next = { ...prev }
+      delete next[watchId]
+      return next
+    })
+
+    try {
+      const result = await api.triggerTestAlarm(watchId)
+      const tickets = Array.isArray(result?.data)
+        ? result.data
+        : result?.data
+          ? [result.data]
+          : []
+      const failedTicket = tickets.find((t) => t?.status === 'error')
+
+      if (result?.error || (Array.isArray(result?.errors) && result.errors.length > 0)) {
+        const msg =
+          result.error ||
+          result.errors?.[0]?.message ||
+          'Failed to deliver test alarm.'
+        setAlarmFeedback((prev) => ({
+          ...prev,
+          [watchId]: { type: 'error', message: msg },
+        }))
+      } else if (failedTicket) {
+        setAlarmFeedback((prev) => ({
+          ...prev,
+          [watchId]: {
+            type: 'error',
+            message: failedTicket.message || 'Device rejected the test alarm.',
+          },
+        }))
+      } else {
+        setAlarmFeedback((prev) => ({
+          ...prev,
+          [watchId]: {
+            type: 'success',
+            message: 'Test alarm sent to linked device.',
+          },
+        }))
+      }
+    } catch (err) {
+      setAlarmFeedback((prev) => ({
+        ...prev,
+        [watchId]: {
+          type: 'error',
+          message: err.message || 'Failed to send test alarm.',
+        },
+      }))
+    } finally {
+      setTestingAlarmId(null)
+    }
   }
 
   const filteredWatches = watches.filter((w) => {
@@ -181,6 +269,12 @@ export default function Watches() {
         <div className="watches-list">
           {filteredWatches.map((w) => {
             const isDeleting = deletingId === w._id
+            const deviceCount = w.device_tokens?.length || 0
+            const isAlarmActive = Boolean(w.alarm_enabled) && deviceCount > 0
+            const isCopied = copiedId === w._id
+            const isTestingAlarm = testingAlarmId === w._id
+            const feedback = alarmFeedback[w._id]
+
             return (
               <div key={w._id} className="watch-card">
                 <div className="watch-card-header">
@@ -200,6 +294,30 @@ export default function Watches() {
                       {isDeleting ? 'Deleting...' : 'Delete'}
                     </button>
                   </div>
+                </div>
+
+                {/* Watch ID & Mobile Alarm Status Bar */}
+                <div className="watch-alarm-bar">
+                  <div className="watch-id-group">
+                    <span className="watch-id-label">Watch ID</span>
+                    <code className="watch-id-code">{w._id}</code>
+                    <button
+                      type="button"
+                      className={`btn-copy-id ${isCopied ? 'copied' : ''}`}
+                      onClick={() => handleCopyWatchId(w._id)}
+                    >
+                      {isCopied ? 'Copied' : 'Copy ID'}
+                    </button>
+                  </div>
+
+                  <span
+                    className={`alarm-status-badge ${isAlarmActive ? 'active' : 'inactive'}`}
+                  >
+                    <span className="alarm-status-dot" aria-hidden="true"></span>
+                    {isAlarmActive
+                      ? `Mobile Alarm: Active (${deviceCount} ${deviceCount === 1 ? 'device' : 'devices'})`
+                      : 'Mobile Alarm: Not Linked'}
+                  </span>
                 </div>
 
                 {/* Metadata Details */}
@@ -253,21 +371,39 @@ export default function Watches() {
                   </div>
                 )}
 
-                {/* Footer with Theatres Trigger */}
+                {/* Footer with Theatres Trigger & Test Alarm */}
                 <div className="watch-card-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-small"
-                    onClick={() => handleOpenVenues(w)}
-                  >
-                    View Seen Theatres ({w.known_venue_count || 0})
-                  </button>
+                  <div className="watch-footer-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => handleOpenVenues(w)}
+                    >
+                      View Seen Theatres ({w.known_venue_count || 0})
+                    </button>
+                    {isAlarmActive && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        disabled={isTestingAlarm}
+                        onClick={() => handleTestAlarm(w._id)}
+                      >
+                        {isTestingAlarm ? 'Sending...' : 'Test Alarm'}
+                      </button>
+                    )}
+                  </div>
                   {w.last_checked_at && (
                     <span className="last-checked">
                       Last checked: {new Date(w.last_checked_at).toLocaleTimeString('en-IN')}
                     </span>
                   )}
                 </div>
+
+                {feedback && (
+                  <div className={`alarm-feedback ${feedback.type}`} role="status">
+                    {feedback.message}
+                  </div>
+                )}
               </div>
             )
           })}

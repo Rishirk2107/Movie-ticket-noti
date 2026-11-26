@@ -7,6 +7,7 @@ from app.config import (
     BREVO_SENDER_NAME,
     NTFY_TOPIC,
 )
+from app.logger import add_log
 
 
 def _post_ntfy_sync(title: str, message: str) -> None:
@@ -157,6 +158,98 @@ def _format_public_bms_url(raw_url: str, date_code: str = "", movie_name: str = 
     return f"https://in.bookmyshow.com{out_path}?{qs_str}"
 
 
+async def send_expo_alarm_push(
+    tokens: list[str] | str,
+    title: str,
+    body: str,
+    data: dict | None = None,
+) -> dict:
+    """
+    Send high-priority mobile alarm push notification using Expo Push Service.
+    POST https://exp.host/--/api/v2/push/send
+    """
+    if isinstance(tokens, str):
+        target_tokens = [tokens.strip()] if tokens.strip() else []
+        to_payload = tokens.strip()
+    else:
+        target_tokens = [t.strip() for t in tokens if isinstance(t, str) and t.strip()]
+        to_payload = target_tokens
+
+    if not target_tokens:
+        add_log("WARN", "Expo push skipped: no device tokens provided.")
+        return {"data": []}
+
+    payload = {
+        "to": to_payload,
+        "title": title,
+        "body": body,
+        "priority": "high",
+        "channelId": "ticket-alarm",
+        "sound": "alarm.wav",
+        "ttl": 300,
+        "data": data or {},
+    }
+
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=payload,
+                headers=headers,
+            )
+
+        try:
+            resp_data = resp.json()
+        except Exception:
+            resp_data = {"text": resp.text, "status_code": resp.status_code}
+
+        if resp.status_code != 200:
+            add_log(
+                "ERROR",
+                f"Expo push failed with HTTP {resp.status_code}: {resp.text}",
+                {"response": resp_data},
+            )
+            return resp_data
+
+        tickets = resp_data.get("data")
+        if isinstance(tickets, dict):
+            tickets = [tickets]
+        elif not isinstance(tickets, list):
+            tickets = []
+
+        for t in tickets:
+            ticket_status = t.get("status")
+            if ticket_status == "ok":
+                add_log("SUCCESS", f"Expo push ticket success: id={t.get('id')}", {"ticket": t})
+            elif ticket_status == "error":
+                err_msg = t.get("message", "Expo push delivery error")
+                details = t.get("details", {})
+                add_log(
+                    "ERROR",
+                    f"Expo push ticket error: {err_msg} ({details.get('error', '')})",
+                    {"ticket": t},
+                )
+
+        errors = resp_data.get("errors")
+        if errors:
+            add_log("ERROR", f"Expo push error response: {errors}", {"errors": errors})
+
+        if not tickets and not errors:
+            add_log("INFO", f"Expo push sent to {len(target_tokens)} token(s)", {"response": resp_data})
+
+        return resp_data
+
+    except Exception as exc:
+        add_log("ERROR", f"Expo push request failed with exception: {exc}", {"error": str(exc)})
+        return {"error": str(exc), "status": "error"}
+
+
 async def notify_new_venues(
     label: str | None,
     url: str,
@@ -164,6 +257,10 @@ async def notify_new_venues(
     added: list[tuple[str, str]],
     date_code: str | None = None,
     movie_name: str | None = None,
+    alarm_enabled: bool = False,
+    device_tokens: list[str] | None = None,
+    watch_id: str | None = None,
+    job: dict | None = None,
 ) -> None:
     if not added:
         return
@@ -182,8 +279,71 @@ async def notify_new_venues(
         + "\n".join(f"- {name} ({code})" for code, name in added)
         + f"\n\nShowtimes URL: {public_url}"
     )
+
+    # 1. Existing ntfy notification
     await send_ntfy_notification(title, summary)
-    await send_brevo_email(emails, title, email_body)
+
+    # Resolve alarm push settings from job or explicit kwargs
+    is_alarm = False
+    tokens: list[str] = []
+    w_id = watch_id or ""
+
+    if job:
+        is_alarm = bool(job.get("alarm_enabled"))
+        raw_tokens = job.get("device_tokens") or []
+        tokens = [t.strip() for t in raw_tokens if isinstance(t, str) and t.strip()]
+        if not w_id:
+            w_id = job.get("_id", "")
+    else:
+        is_alarm = bool(alarm_enabled)
+        raw_tokens = device_tokens or []
+        tokens = [t.strip() for t in raw_tokens if isinstance(t, str) and t.strip()]
+
+    # 2. Spawn Expo alarm push concurrently if alarm_enabled and device_tokens are present
+    push_task = None
+    if is_alarm and tokens:
+        push_body = f"New theatre(s) added: {summary}"
+        push_data = {
+            "watch_id": w_id,
+            "label": watch_label,
+            "date_code": date_code or "",
+            "venues": [
+                {
+                    "code": code,
+                    "name": name,
+                    "venue_code": code,
+                    "venue_name": name,
+                }
+                for code, name in added
+            ],
+            "showtimes_url": public_url,
+        }
+
+        async def _safe_push():
+            try:
+                await send_expo_alarm_push(
+                    tokens=tokens,
+                    title=title,
+                    body=push_body,
+                    data=push_data,
+                )
+            except Exception as exc:
+                print(f"[WARN] Expo alarm push dispatch failed: {exc}")
+
+        push_task = asyncio.create_task(_safe_push())
+
+    # 3. Existing Brevo email delivery (must run alongside push without failing or blocking)
+    try:
+        await send_brevo_email(emails, title, email_body)
+    except Exception as exc:
+        print(f"[WARN] Brevo email delivery failed: {exc}")
+
+    # Await push task if scheduled so it completes cleanly
+    if push_task:
+        try:
+            await push_task
+        except Exception as exc:
+            print(f"[WARN] Expo push task exception: {exc}")
 
 
 async def send_watch_registration_email(

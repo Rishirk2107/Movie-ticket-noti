@@ -1315,6 +1315,126 @@ body {
   color: var(--text-dim);
 }
 
+.watch-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.watch-alarm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.85rem;
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+}
+
+.watch-id-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.watch-id-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.watch-id-code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-main);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.btn-copy-id {
+  background-color: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-copy-id:hover {
+  color: var(--text-main);
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--border-color-hover);
+}
+
+.btn-copy-id.copied {
+  color: var(--success);
+  background-color: var(--success-subtle);
+  border-color: var(--success-border);
+}
+
+.alarm-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.22rem 0.65rem;
+  border-radius: var(--radius-full);
+}
+
+.alarm-status-badge.active {
+  background-color: var(--success-subtle);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.alarm-status-badge.inactive {
+  background-color: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+.alarm-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.alarm-feedback {
+  margin-top: 0.85rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.alarm-feedback.success {
+  background-color: var(--success-subtle);
+  border: 1px solid var(--success-border);
+  color: var(--success);
+}
+
+.alarm-feedback.error {
+  background-color: var(--danger-subtle);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+}
+
 /* --------------------------------------------------------------------------
    Theatres Modal (Dark Glassmorphic)
    -------------------------------------------------------------------------- */

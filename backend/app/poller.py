@@ -114,6 +114,10 @@ async def run_single_watch_check(watches_col, seen_col, job: dict) -> list[tuple
                         added,
                         date_code=d_code,
                         movie_name=job.get("movie_name"),
+                        alarm_enabled=job.get("alarm_enabled", False),
+                        device_tokens=job.get("device_tokens", []),
+                        watch_id=watch_id,
+                        job=job,
                     )
                     all_added.extend(added)
             except Exception as exc:

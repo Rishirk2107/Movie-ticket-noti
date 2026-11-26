@@ -73,6 +73,17 @@ export const api = {
     return handleResponse(res)
   },
 
+  // Trigger test mobile alarm for watch
+  async triggerTestAlarm(watchId) {
+    const res = await fetch(
+      `${BASE_URL}/watches/${encodeURIComponent(watchId)}/test-alarm`,
+      {
+        method: 'POST',
+      }
+    )
+    return handleResponse(res)
+  },
+
   // Real-time activity logs
   async getLogs(limit = 50, signal) {
     const res = await fetch(`${BASE_URL}/logs?limit=${limit}`, { signal })

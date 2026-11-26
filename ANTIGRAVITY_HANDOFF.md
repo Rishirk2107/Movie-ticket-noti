@@ -2,8 +2,8 @@
 
 **Project Name:** BookMyShow Movie Ticket Notifier & Watcher  
 **Workspace Root:** `c:\Users\rishi\Downloads\Movie-ticket-noti`  
-**Generated Date:** November 24, 2026  
-**Status:** Fully Implemented, Verified, and Operational  
+**Generated Date:** November 26, 2026  
+**Status:** Fully Implemented, Verified, and Operational (with Expo Mobile Push Alarm Support)  
 
 ---
 
@@ -21,6 +21,7 @@ Movie-ticket-noti/
     ├── .env                           <-- Environment variables (Mongo, Brevo, ntfy, BMS cookie)
     ├── requirements.txt               <-- Python package dependencies
     ├── run.py                         <-- Application entry point (uvicorn launcher)
+    ├── test_alarm_push.py             <-- Automated test suite (Expo push dispatcher, devices, alarm tests)
     │
     └── app/
         ├── __init__.py                <-- Package marker
@@ -28,7 +29,7 @@ Movie-ticket-noti/
         ├── logger.py                  <-- Thread-safe in-memory ring buffer logger
         ├── db.py                      <-- MongoDB connection, schema setup & seen_venues deduplication
         ├── bms_client.py              <-- BMS URL parser, date parsing, synopsis & showtimes client
-        ├── notifier.py                <-- ntfy push & Brevo transactional email dispatcher
+        ├── notifier.py                <-- ntfy, Brevo transactional email & Expo Push mobile alarm dispatcher
         ├── poller.py                  <-- Background scheduler, multi-date collector & expiry cleaner
         ├── main.py                    <-- FastAPI web application, API routes & HTML endpoints
         │
@@ -42,15 +43,16 @@ Movie-ticket-noti/
 | File | Exact Responsibility | Key Functions / Classes / Routes |
 | :--- | :--- | :--- |
 | **`backend/run.py`** | Application process entry point. Launches Uvicorn ASGI server hosting `app.main:app` on configured `PORT` (default `8000`) with `0.0.0.0` binding. | `__main__` entry calling `uvicorn.run("app.main:app", ...)` |
+| **`backend/test_alarm_push.py`** | Comprehensive test suite for mobile alarm push, token registration/removal, test alarm triggers, and concurrent notification dispatch. | `TestExpoPushDispatcher`<br>`TestNotifyNewVenues`<br>`TestMainEndpoints` (11 passing unit tests) |
 | **`backend/requirements.txt`** | Frozen Python package dependencies for the runtime environment. | `fastapi`, `uvicorn`, `pymongo`, `curl_cffi`, `httpx`, `python-dotenv`, `pydantic`, `dnspython` |
 | **`backend/.env`** | Local environment configuration storing database credentials, notification keys, CORS origins, and optional session cookies. | `MONGO_URI`, `MONGO_DB`, `NTFY_TOPIC`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, `BMS_COOKIE`, `CORS_ORIGINS`, `PORT` |
 | **`backend/app/config.py`** | Loads `.env` via `python-dotenv` and defines global configuration constants, `IST_TZ` timezone (`UTC+5:30`), `CORS_ORIGINS`, BookMyShow API URLs, and browser-impersonation request headers. | `IST_TZ`, `CORS_ORIGINS`, `MONGO_URI`, `MONGO_DB`, `NTFY_TOPIC`, `BMS_COOKIE`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, `API_BASE_URL`, `SYNOPSIS_API_URL`, `SYNOPSIS_STATIC_API_URL`, `DEFAULT_HEADERS` |
 | **`backend/app/logger.py`** | In-memory thread-safe log collector using a fixed-size `deque(maxlen=100)`. Prints logs to standard output and exposes them via `/logs` for real-time frontend monitoring. | `add_log(level, message, meta)`<br>`get_logs(limit)` |
 | **`backend/app/db.py`** | Manages async MongoDB connection using `AsyncMongoClient`. Creates unique compound indexes on `seen_venues` and handles atomic upserts. | `init_db()`<br>`record_venues_and_get_new(seen_col, watch_id, venues, date_code, mark_notified)`<br>`update_watch_available_dates(watches_col, watch_id, new_dates)` |
 | **`backend/app/bms_client.py`** | BookMyShow reverse-engineered client. Handles URL parsing, date normalization, release date extraction, dynamic synopsis scraping, date strip discovery, and showtimes querying with auto-snap detection. | `parse_release_date(date_str)`<br>`extract_url_info(raw_url)`<br>`replace_url_date(raw_url, new_date_code)`<br>`build_api_url(raw_url, date_code)`<br>`parse_venues_and_dates(payload)`<br>`_is_bms_autosnapped(payload)`<br>`fetch_synopsis(event_code, session)`<br>`fetch_venues_direct(raw_url, date_code, session, max_retries)` |
-| **`backend/app/notifier.py`** | Dispatches push notifications to `ntfy.sh` and transactional HTML/text emails via Brevo REST API v3. Handles both watch registration and new theatre discovery alerts. | `send_ntfy_notification(title, message)`<br>`send_brevo_email(recipients, subject, text_body)`<br>`notify_new_venues(label, url, emails, added, date_code)`<br>`send_watch_registration_email(emails, label, movie_name, city, start_date, end_date, url, initial_theatres_count)` |
-| **`backend/app/poller.py`** | Background task running during app lifespan. Resolves dates to poll, enforces 14-day date ranges, handles `-1` day preview dates, polls dates with auto-snap protection, and auto-deletes expired watches. | `get_poll_date_codes(job)`<br>`get_watch_date_codes(job)`<br>`is_watch_expired(job)`<br>`run_single_watch_check(watches_col, seen_col, job)`<br>`poll_loop(watches_col, seen_col)` |
-| **`backend/app/main.py`** | FastAPI application setup with lifespan manager (spawns background poller and connects DB). Hosts HTML templates and REST API endpoints for watches, logs, and BMS proxy endpoints. | `lifespan(app)`<br>`WatchCreateRequest` (Pydantic model)<br>`GET /`<br>`GET /create`<br>`GET /health`<br>`GET /api/bms/movies`<br>`GET /api/bms/synopsis`<br>`POST /watches`<br>`GET /watches`<br>`GET /watches/{watch_id}/venues`<br>`DELETE /watches/{watch_id}`<br>`GET /logs` |
+| **`backend/app/notifier.py`** | Dispatches push notifications to `ntfy.sh`, transactional HTML/text emails via Brevo REST API v3, and high-priority alarm notifications via Expo Push Service (`exp.host`). Runs push alongside email concurrently without failing or blocking email delivery. | `send_ntfy_notification(title, message)`<br>`send_brevo_email(recipients, subject, text_body)`<br>`send_expo_alarm_push(tokens, title, body, data)`<br>`notify_new_venues(...)`<br>`send_watch_registration_email(...)` |
+| **`backend/app/poller.py`** | Background task running during app lifespan. Resolves dates to poll, enforces 14-day date ranges, handles `-1` day preview dates, polls dates with auto-snap protection, invokes `notify_new_venues` with alarm support, and auto-deletes expired watches. | `get_poll_date_codes(job)`<br>`get_watch_date_codes(job)`<br>`is_watch_expired(job)`<br>`run_single_watch_check(watches_col, seen_col, job)`<br>`poll_loop(watches_col, seen_col)` |
+| **`backend/app/main.py`** | FastAPI web application with lifespan manager. Hosts HTML templates, proxy endpoints, watch CRUD, device token registration/removal, and test alarm trigger endpoints. | `lifespan(app)`<br>`WatchCreateRequest`<br>`DeviceTokenRequest`<br>`POST /watches`<br>`GET /watches`<br>`POST /watches/{watch_id}/devices`<br>`DELETE /watches/{watch_id}/devices`<br>`POST /watches/{watch_id}/test-alarm`<br>`GET /watches/{watch_id}/venues`<br>`DELETE /watches/{watch_id}`<br>`GET /logs` |
 | **`backend/app/templates/index.html`** | Single-page UI for viewing active watches, discovered date badges, theatre counts, real-time log streaming box, and viewing seen venues modal. | Search filtering, watch deletion, auto-refresh polling (5s for logs, 15s for watches), venue details modal. |
 | **`backend/app/templates/create.html`** | Interactive multi-step watch creation wizard. Browse/search Chennai movies, pick format & language chips, select date ranges with earliest opening date defaulting, preview toggle, interval, and multi-email chips. | Step 1: Movie Picker<br>Step 2: Language & Format Chips<br>Step 3: Watch Configuration & Submit |
 
@@ -149,6 +151,9 @@ To eliminate UTC day-shift bugs (where converting dates via `toISOString()` shif
 | `GET` | `/api/bms/synopsis` | Fetch movie formats & dates | `eventcode` (Query, string, required) | `200 OK` (JSON) |
 | `POST` | `/watches` | Create a new ticket watch | `WatchCreateRequest` (JSON) | `201 Created` |
 | `GET` | `/watches` | List all active watches | None | `200 OK` (JSON) |
+| `POST` | `/watches/{watch_id}/devices` | Register mobile Expo push token | `DeviceTokenRequest` (JSON) | `200 OK` (JSON) / `400` / `404` |
+| `DELETE` | `/watches/{watch_id}/devices` | Unregister mobile Expo push token | `DeviceTokenRequest` (JSON) | `200 OK` (JSON) / `404` |
+| `POST` | `/watches/{watch_id}/test-alarm` | Trigger high-priority test push alarm | `watch_id` (Path, string, required) | `200 OK` (JSON) / `400` / `404` |
 | `GET` | `/watches/{watch_id}/venues` | List seen venues for a watch | `watch_id` (Path, string, required) | `200 OK` (JSON) |
 | `DELETE` | `/watches/{watch_id}` | Delete watch & seen venues | `watch_id` (Path, string, required) | `200 OK` (JSON) / `404 Not Found` |
 | `GET` | `/logs` | Get recent log ring buffer | `limit` (Query, int, default `50`) | `200 OK` (JSON) |
@@ -276,14 +281,76 @@ To eliminate UTC day-shift bugs (where converting dates via `toISOString()` shif
     "release_date_8digit": "20261218",
     "available_dates": ["20261216", "20261217", "20261218", "20261219", "20261220", "20261221", "20261222"],
     "dates_updated_at": "2026-11-24T06:15:00.000000+00:00",
+    "alarm_enabled": false,
+    "device_tokens": [],
     "known_venue_count": 4
   }
   ```
 
 #### 5. `GET /watches`
-* **Response `200 OK`:** List of watch objects, each enriched with `known_venue_count` computed from `seen_venues`.
+* **Response `200 OK`:** List of watch objects, each enriched with `known_venue_count` computed from `seen_venues`. Backward compatible with older documents (missing `alarm_enabled` defaults to `false`, missing `device_tokens` defaults to `[]`).
 
-#### 6. `GET /watches/{watch_id}/venues`
+#### 6. `POST /watches/{watch_id}/devices`
+* **Purpose:** Register a mobile push notification device token (Expo) for alarm push alerts.
+* **Request JSON Body (`DeviceTokenRequest`):**
+  ```json
+  {
+    "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+  }
+  ```
+* **Validation & Storage:**
+  * Validates that `token` starts with `"ExponentPushToken["` or `"ExpoPushToken["` (HTTP `400 Bad Request` if invalid).
+  * Returns HTTP `404 Not Found` if `watch_id` does not exist.
+  * Adds token to `device_tokens` using MongoDB `$addToSet` (preventing duplicates).
+  * Sets `"alarm_enabled": true`.
+* **Response `200 OK`:** Returns the updated device token list:
+  ```json
+  [
+    "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+  ]
+  ```
+
+#### 7. `DELETE /watches/{watch_id}/devices`
+* **Purpose:** Unregister a mobile device push token.
+* **Request JSON Body (`DeviceTokenRequest`):**
+  ```json
+  {
+    "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+  }
+  ```
+* **Storage & Logic:**
+  * Returns HTTP `404 Not Found` if `watch_id` does not exist.
+  * Pulls token from `device_tokens` using MongoDB `$pull`.
+  * Dynamically updates `"alarm_enabled"`: `true` if remaining tokens exist, `false` if `device_tokens` is empty.
+* **Response `200 OK`:**
+  ```json
+  {
+    "status": "ok",
+    "alarm_enabled": false,
+    "device_tokens": []
+  }
+  ```
+
+#### 8. `POST /watches/{watch_id}/test-alarm`
+* **Purpose:** Triggers a high-priority test push alarm notification to all devices linked to `watch_id`.
+* **Path Parameters:** `watch_id` (`str`).
+* **Validation & Execution:**
+  * Returns HTTP `404 Not Found` if `watch_id` does not exist.
+  * Returns HTTP `400 Bad Request` if no devices are linked (`device_tokens` empty).
+  * Dispatches test push via `send_expo_alarm_push(...)` with `priority="high"`, `channelId="ticket-alarm"`, `sound="alarm.wav"`, `ttl=300`, and structured payload `(watch_id, label, date_code, venues, showtimes_url)`.
+* **Response `200 OK`:** Returns the direct Expo ticket response object:
+  ```json
+  {
+    "data": [
+      {
+        "status": "ok",
+        "id": "xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      }
+    ]
+  }
+  ```
+
+#### 9. `GET /watches/{watch_id}/venues`
 * **Path Parameters:** `watch_id` (`str`).
 * **Response `200 OK`:**
   ```json
@@ -299,12 +366,12 @@ To eliminate UTC day-shift bugs (where converting dates via `toISOString()` shif
   ]
   ```
 
-#### 7. `DELETE /watches/{watch_id}`
+#### 10. `DELETE /watches/{watch_id}`
 * **Response `200 OK`:** `{"deleted": "a1b2c3d4"}`.
 * **Response `404 Not Found`:** `{"detail": "Watch not found."}`.
 * Deletes the watch document from `watches` and all matching entries from `seen_venues`.
 
-#### 8. `GET /logs`
+#### 11. `GET /logs`
 * **Query Parameters:** `limit` (`int`, optional, default `50`).
 * **Response `200 OK`:**
   ```json
@@ -489,7 +556,9 @@ Stores watch configuration and dynamic date-discovery state.
   last_error: string | null,     // Last error message or null
   release_date_8digit: string,   // "YYYYMMDD" or ""
   available_dates: string[],     // Dynamically updated array of 8-digit date codes
-  dates_updated_at: string       // ISO-8601 UTC timestamp of last date strip update
+  dates_updated_at: string,      // ISO-8601 UTC timestamp of last date strip update
+  alarm_enabled: boolean,        // true = mobile push alarms enabled
+  device_tokens: string[]        // Array of registered Expo push tokens ("ExponentPushToken[...]")
 }
 ```
 
@@ -589,6 +658,37 @@ Stores historical theatres seen to prevent duplicate notifications.
   * Subject: `New Theatre - {watch_label} ({date})`
   * Text & HTML body listing each new venue name and venue code, plus showtimes URL.
 
+#### 3. Expo Push Service Mobile Alarms (`send_expo_alarm_push`)
+* **Target:** `https://exp.host/--/api/v2/push/send`
+* **Method:** HTTP `POST` with JSON payload using `httpx.AsyncClient`.
+* **Push Configuration:**
+  * `priority`: `"high"` (wakes up mobile devices from sleep/doze modes)
+  * `channelId`: `"ticket-alarm"` (matches high-importance Android notification channel with sound)
+  * `sound`: `"alarm.wav"` (custom alert sound bundled with companion mobile client)
+  * `ttl`: `300` (time-to-live in seconds; discards outdated alerts if offline > 5 mins)
+* **Data Payload:** Structured JSON dictionary containing:
+  ```json
+  {
+    "watch_id": "a1b2c3d4",
+    "label": "Dune: Part Three Chennai",
+    "date_code": "20261216",
+    "venues": [
+      {
+        "code": "SPIB",
+        "name": "SPI Palazzo IMAX: Chennai",
+        "venue_code": "SPIB",
+        "venue_name": "SPI Palazzo IMAX: Chennai"
+      }
+    ],
+    "showtimes_url": "https://in.bookmyshow.com/movies/chennai/buytickets/ET00526290/20261216?etCodes=ET00526290&language=english&refEventCode=ET00491771"
+  }
+  ```
+* **Non-Blocking Concurrent Dispatch:**
+  * When `notify_new_venues` runs and `alarm_enabled` + `device_tokens` are present on the watch, `send_expo_alarm_push` is scheduled via `asyncio.create_task` and runs concurrently alongside `send_brevo_email(...)`.
+  * If the Expo push service experiences timeouts or errors, it is logged and handled without blocking or failing email delivery.
+* **Ticket Status Logging:**
+  * Responses are evaluated: individual ticket success is logged with `SUCCESS` level, and individual ticket errors (e.g. `DeviceNotRegistered`) or top-level API errors are logged with `ERROR` level in the in-memory ring buffer (`add_log`).
+
 ---
 
 ### Environment Variables Reference
@@ -622,3 +722,29 @@ Stores historical theatres seen to prevent duplicate notifications.
    * Date calculations rely strictly on ISO strings, date integers, and UTC datetime objects combined with frontend IST offsets, preventing runtime failures on minimal Windows/container environments.
 6. **In-Memory Logging Buffer:**
    * The live activity log (`logger.py`) uses an in-memory deque with a maximum capacity of 100 entries. It provides real-time visibility in the web UI without incurring disk I/O overhead. Restarting the server resets this buffer.
+7. **Expo Push Token Format Enforcement:**
+   * Device tokens registered via `POST /watches/{watch_id}/devices` must strictly begin with `"ExponentPushToken["` or `"ExpoPushToken["` to guard against invalid or corrupted client data.
+
+---
+
+## 7. Automated Test Suite & Verification
+
+The test suite in `backend/test_alarm_push.py` provides automated end-to-end verification across the push dispatcher, notification pipelines, and FastAPI endpoints.
+
+Run the test suite with:
+```powershell
+& "c:\Users\rishi\Downloads\Movie-ticket-noti\venv\Scripts\python.exe" -u backend/test_alarm_push.py
+```
+
+### Verified Test Cases (11/11 Passing)
+1. **`test_send_expo_alarm_push_payload_and_success`**: Verifies HTTP POST to `https://exp.host/--/api/v2/push/send` with `"priority": "high"`, `"channelId": "ticket-alarm"`, `"sound": "alarm.wav"`, `"ttl": 300`, and structured JSON payload. Asserts that ticket success logs to `add_log`.
+2. **`test_send_expo_alarm_push_error_logging`**: Verifies error tickets (e.g. `DeviceNotRegistered`) log with level `ERROR` via `add_log`.
+3. **`test_send_expo_alarm_push_exception_handling`**: Verifies that network timeouts or connection exceptions return error dictionaries gracefully without crashing.
+4. **`test_notify_runs_push_alongside_email`**: Verifies that `notify_new_venues` dispatches both Brevo transactional email and Expo push alarms concurrently when enabled.
+5. **`test_push_failure_does_not_block_or_fail_email`**: Verifies that if Expo push fails with an exception, email delivery continues uninhibited.
+6. **`test_push_skipped_when_alarm_disabled_or_no_tokens`**: Verifies that push is bypassed when `alarm_enabled=False` or when `device_tokens` is empty.
+7. **`test_watch_creation_defaults_alarm_fields`**: Verifies that `GET /watches` gracefully supplies `"alarm_enabled": False` and `"device_tokens": []` for older database documents missing those keys.
+8. **`test_watch_creation_initializes_alarm_fields`**: Verifies that `POST /watches` initializes new watch documents with `"alarm_enabled": False` and `"device_tokens": []`.
+9. **`test_device_registration_and_validation`**: Verifies that invalid tokens return HTTP 400, valid tokens are appended via `$addToSet`, `"alarm_enabled"` is set to `True`, duplicate tokens are ignored, and missing watches return HTTP 404.
+10. **`test_device_removal`**: Verifies that `$pull` unregisters tokens, `"alarm_enabled"` remains `True` if other tokens remain, turns `False` when the last token is removed, and returns HTTP 200 OK.
+11. **`test_test_alarm_endpoint`**: Verifies that `POST /watches/{watch_id}/test-alarm` returns HTTP 400 if no devices are linked, HTTP 404 if the watch is missing, and dispatches a test alarm push returning the Expo push ticket response.

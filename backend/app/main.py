@@ -34,7 +34,11 @@ from app.config import (
 )
 from app.db import init_db, record_venues_and_get_new, update_watch_available_dates
 from app.logger import get_logs
-from app.notifier import send_watch_registration_email
+from app.notifier import (
+    _format_public_bms_url,
+    send_expo_alarm_push,
+    send_watch_registration_email,
+)
 from app.poller import get_poll_date_codes, poll_loop
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -84,6 +88,12 @@ class WatchCreateRequest(BaseModel):
     start_date: Optional[str] = None       # YYYY-MM-DD
     end_date: Optional[str] = None         # YYYY-MM-DD
     include_preview: bool = False          # include releaseDate-1 date
+    alarm_enabled: bool = False
+    device_tokens: list[str] = []
+
+
+class DeviceTokenRequest(BaseModel):
+    token: str
 
 
 # ─────────────────────────── App lifespan ────────────────────────────────────
@@ -694,6 +704,8 @@ async def create_watch(payload: WatchCreateRequest):
         "release_date_8digit": release_date_8digit,
         "available_dates": merged_dates,
         "dates_updated_at": now_iso,
+        "alarm_enabled": False,
+        "device_tokens": [],
     }
 
     await app.state.watches_col.insert_one(doc)
@@ -720,6 +732,8 @@ async def list_watches():
     watches = []
     async for doc in app.state.watches_col.find({}):
         count = await app.state.seen_col.count_documents({"watch_id": doc["_id"]})
+        doc.setdefault("alarm_enabled", False)
+        doc.setdefault("device_tokens", [])
         watches.append({**doc, "known_venue_count": count})
     return watches
 
@@ -738,6 +752,107 @@ async def delete_watch(watch_id: str):
         raise HTTPException(status_code=404, detail="Watch not found.")
     await app.state.seen_col.delete_many({"watch_id": watch_id})
     return {"deleted": watch_id}
+
+
+# ─────────────────────── Device Registration & Alarms ─────────────────────────
+
+@app.post("/watches/{watch_id}/devices")
+async def register_watch_device(watch_id: str, payload: DeviceTokenRequest):
+    token = payload.token.strip() if payload.token else ""
+    if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid push token. Token must start with 'ExponentPushToken[' or 'ExpoPushToken['.",
+        )
+
+    watch = await app.state.watches_col.find_one({"_id": watch_id})
+    if not watch:
+        raise HTTPException(status_code=404, detail="Watch not found.")
+
+    await app.state.watches_col.update_one(
+        {"_id": watch_id},
+        {
+            "$addToSet": {"device_tokens": token},
+            "$set": {"alarm_enabled": True},
+        },
+    )
+
+    updated_watch = await app.state.watches_col.find_one({"_id": watch_id})
+    device_tokens = updated_watch.get("device_tokens", []) if updated_watch else []
+    return device_tokens
+
+
+@app.delete("/watches/{watch_id}/devices")
+async def unregister_watch_device(watch_id: str, payload: DeviceTokenRequest):
+    token = payload.token.strip() if payload.token else ""
+    watch = await app.state.watches_col.find_one({"_id": watch_id})
+    if not watch:
+        raise HTTPException(status_code=404, detail="Watch not found.")
+
+    await app.state.watches_col.update_one(
+        {"_id": watch_id},
+        {"$pull": {"device_tokens": token}},
+    )
+
+    updated_watch = await app.state.watches_col.find_one({"_id": watch_id})
+    remaining_tokens = updated_watch.get("device_tokens", []) if updated_watch else []
+    alarm_enabled = len(remaining_tokens) > 0
+
+    await app.state.watches_col.update_one(
+        {"_id": watch_id},
+        {"$set": {"alarm_enabled": alarm_enabled}},
+    )
+
+    return {"status": "ok", "alarm_enabled": alarm_enabled, "device_tokens": remaining_tokens}
+
+
+@app.post("/watches/{watch_id}/test-alarm")
+async def trigger_test_alarm(watch_id: str):
+    watch = await app.state.watches_col.find_one({"_id": watch_id})
+    if not watch:
+        raise HTTPException(status_code=404, detail="Watch not found.")
+
+    tokens = watch.get("device_tokens", [])
+    valid_tokens = [t.strip() for t in tokens if isinstance(t, str) and t.strip()]
+    if not valid_tokens:
+        raise HTTPException(
+            status_code=400,
+            detail="No devices linked to this watch.",
+        )
+
+    date_code = (
+        watch.get("date_code")
+        or (watch.get("available_dates", [""])[0] if watch.get("available_dates") else "")
+        or ""
+    )
+    movie_name = watch.get("movie_name") or (watch.get("label", "").split(" - ")[0] if watch.get("label") else "")
+    showtimes_url = _format_public_bms_url(watch.get("url", ""), date_code=date_code, movie_name=movie_name)
+
+    data = {
+        "watch_id": watch_id,
+        "label": watch.get("label", ""),
+        "date_code": date_code,
+        "venues": [
+            {
+                "code": "TEST",
+                "name": "Test Theatre",
+                "venue_code": "TEST",
+                "venue_name": "Test Theatre",
+            }
+        ],
+        "showtimes_url": showtimes_url,
+    }
+
+    title = f"Test Alarm - {watch.get('label', 'BookMyShow Watch')}"
+    body = "Test alarm notification for new theatre openings."
+
+    ticket_response = await send_expo_alarm_push(
+        tokens=valid_tokens,
+        title=title,
+        body=body,
+        data=data,
+    )
+    return ticket_response
 
 
 @app.get("/logs")
