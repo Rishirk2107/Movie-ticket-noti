@@ -222,7 +222,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# # Mobile Firebase credentials & private keys
-# google-services.json
-# *firebase-adminsdk*.json
-# bms-alarm-*.json
+# Mobile Firebase credentials & private keys
+google-services.json
+*firebase-adminsdk*.json
+bms-alarm-*.json

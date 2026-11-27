@@ -3,13 +3,67 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
-import { setAudioModeAsync } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 import { savePendingAlarm } from './storage';
 
 export const ALARM_CHANNEL_ID = 'ticket-alarm';
 export const BACKGROUND_NOTIFICATION_TASK = 'BMS_TICKET_ALARM_BACKGROUND_TASK';
 export const ALARM_SOUND_ASSET = require('../../assets/alarm.wav');
+
+let activeAlarmPlayer = null;
+let isAlarmPlaying = false;
+let alarmGeneration = 0;
+let lastStoppedAt = 0;
+
+const trackedNotificationIds = new Set();
+const handledNotificationIds = new Set();
+
+export function getIsAlarmPlaying() {
+  return isAlarmPlaying;
+}
+
+function getNotificationId(source) {
+  return (
+    source?.notification?.request?.identifier ||
+    source?.request?.identifier ||
+    null
+  );
+}
+
+function getNotificationTimestampMs(source) {
+  const rawDate = source?.notification?.date ?? source?.date;
+  if (typeof rawDate !== 'number' || Number.isNaN(rawDate)) return 0;
+  // Android/iOS may report seconds (< 1e12) or milliseconds
+  return rawDate < 1e12 ? rawDate * 1000 : rawDate;
+}
+
+export function trackAlarmNotification(source) {
+  const id = getNotificationId(source);
+  if (id) {
+    trackedNotificationIds.add(id);
+  }
+}
+
+export function markNotificationHandled(source) {
+  const id = getNotificationId(source);
+  if (id) {
+    handledNotificationIds.add(id);
+  }
+}
+
+export function shouldIgnoreNotificationResponse(response) {
+  if (!response) return true;
+  const id = getNotificationId(response);
+  if (id && handledNotificationIds.has(id)) {
+    return true;
+  }
+  const notifMs = getNotificationTimestampMs(response);
+  if (notifMs > 0 && lastStoppedAt > 0 && notifMs <= lastStoppedAt) {
+    return true;
+  }
+  return false;
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -76,7 +130,9 @@ if (!TaskManager.isTaskDefined(BACKGROUND_NOTIFICATION_TASK)) {
     }
     const alarmPayload = extractAlarmPayload(data);
     if (alarmPayload) {
+      trackAlarmNotification(data);
       await savePendingAlarm(alarmPayload);
+      await startAlarmLoop();
       return Notifications.BackgroundNotificationTaskResult.NewData;
     }
     return Notifications.BackgroundNotificationTaskResult.NoData;
@@ -169,25 +225,145 @@ export async function configureAlarmAudioMode() {
   }
 }
 
-export function startLoopingAlarmPlayback(player) {
-  if (!player) return;
+export async function startAlarmLoop() {
+  if (isAlarmPlaying && activeAlarmPlayer) {
+    try {
+      activeAlarmPlayer.loop = true;
+      activeAlarmPlayer.volume = 1.0;
+      activeAlarmPlayer.play();
+    } catch {
+      // Fall through to recreate if existing handle became invalid
+    }
+    return;
+  }
+
+  // Tear down any stale player before starting a new generation
+  if (activeAlarmPlayer) {
+    const stale = activeAlarmPlayer;
+    activeAlarmPlayer = null;
+    try {
+      stale.pause();
+    } catch {}
+    try {
+      stale.remove?.();
+    } catch {}
+  }
+
+  const myGeneration = ++alarmGeneration;
+  isAlarmPlaying = true;
+  await configureAlarmAudioMode();
+
+  // Abort if stopAlarmLoop() ran while awaiting audio mode configuration
+  if (!isAlarmPlaying || myGeneration !== alarmGeneration) {
+    return;
+  }
+
   try {
+    const player = createAudioPlayer(ALARM_SOUND_ASSET);
+    if (!isAlarmPlaying || myGeneration !== alarmGeneration) {
+      try {
+        player.pause();
+      } catch {}
+      try {
+        player.remove?.();
+      } catch {}
+      return;
+    }
     player.loop = true;
     player.volume = 1.0;
     player.play();
+    activeAlarmPlayer = player;
   } catch {
-    // Ignore if player is already released
+    activeAlarmPlayer = null;
+    isAlarmPlaying = false;
   }
-  Vibration.vibrate([0, 600, 300], true);
+
+  if (isAlarmPlaying && myGeneration === alarmGeneration) {
+    try {
+      Vibration.vibrate([0, 600, 300], true);
+    } catch {
+      // Ignore vibration errors on unsupported devices
+    }
+  }
 }
 
-export async function stopLoopingAlarmPlayback(player) {
-  Vibration.cancel();
-  if (!player) return;
+export async function stopAlarmLoop() {
+  isAlarmPlaying = false;
+  alarmGeneration += 1;
+  lastStoppedAt = Date.now();
+
+  const idsToDismiss = Array.from(trackedNotificationIds);
+  for (const id of idsToDismiss) {
+    handledNotificationIds.add(id);
+  }
+  trackedNotificationIds.clear();
+
+  const player = activeAlarmPlayer;
+  activeAlarmPlayer = null;
+
   try {
-    player.pause();
-    await player.seekTo(0);
+    Vibration.cancel();
   } catch {
-    // Ignore cleanup errors
+    // Ignore vibration cancel errors
+  }
+
+  if (player) {
+    try {
+      player.pause();
+    } catch {
+      // Continue cleanup
+    }
+
+    try {
+      if (typeof player.stop === 'function') {
+        player.stop();
+      }
+    } catch {
+      // Continue cleanup
+    }
+
+    try {
+      await player.seekTo(0);
+    } catch {
+      // Continue cleanup
+    }
+
+    try {
+      if (typeof player.remove === 'function') {
+        player.remove();
+      }
+    } catch {
+      // Continue cleanup
+    }
+
+    try {
+      if (typeof player.unloadAsync === 'function') {
+        await player.unloadAsync();
+      }
+    } catch {
+      // Continue cleanup
+    }
+  }
+
+  for (const id of idsToDismiss) {
+    try {
+      await Notifications.dismissNotificationAsync(id);
+    } catch {
+      // Ignore per-notification dismiss errors
+    }
+  }
+
+  try {
+    await Notifications.dismissAllNotificationsAsync();
+  } catch {
+    // Ignore tray dismissal errors
+  }
+
+  try {
+    if (typeof Notifications.clearLastNotificationResponseAsync === 'function') {
+      await Notifications.clearLastNotificationResponseAsync();
+    }
+  } catch {
+    // Ignore clear response errors
   }
 }

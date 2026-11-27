@@ -12,8 +12,11 @@ import WatchesScreen from './src/screens/WatchesScreen';
 import { DEFAULT_BACKEND_URL, getHealth, getWatches } from './src/services/api';
 import {
   extractAlarmPayload,
+  markNotificationHandled,
   registerBackgroundNotificationTask,
   registerForPushNotificationsAsync,
+  shouldIgnoreNotificationResponse,
+  trackAlarmNotification,
 } from './src/services/notifications';
 import {
   consumePendingAlarm,
@@ -80,9 +83,13 @@ export default function App() {
       }
 
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
-      const coldPayload = extractAlarmPayload(lastResponse);
-      if (mounted && coldPayload) {
-        setActiveAlarm(coldPayload);
+      if (lastResponse && !shouldIgnoreNotificationResponse(lastResponse)) {
+        const coldPayload = extractAlarmPayload(lastResponse);
+        if (mounted && coldPayload) {
+          trackAlarmNotification(lastResponse);
+          markNotificationHandled(lastResponse);
+          setActiveAlarm(coldPayload);
+        }
       }
     }
 
@@ -90,12 +97,20 @@ export default function App() {
 
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
       const payload = extractAlarmPayload(notification);
-      if (payload) setActiveAlarm(payload);
+      if (payload) {
+        trackAlarmNotification(notification);
+        setActiveAlarm(payload);
+      }
     });
 
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      if (shouldIgnoreNotificationResponse(response)) return;
       const payload = extractAlarmPayload(response);
-      if (payload) setActiveAlarm(payload);
+      if (payload) {
+        trackAlarmNotification(response);
+        markNotificationHandled(response);
+        setActiveAlarm(payload);
+      }
     });
 
     return () => {

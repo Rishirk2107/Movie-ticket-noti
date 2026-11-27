@@ -7,73 +7,59 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  Vibration,
   View,
 } from 'react-native';
-import { useAudioPlayer } from 'expo-audio';
 
 import { COLORS, MONO_FONT, RADII, SHADOWS } from '../constants/theme';
-import {
-  ALARM_SOUND_ASSET,
-  configureAlarmAudioMode,
-  startLoopingAlarmPlayback,
-  stopLoopingAlarmPlayback,
-} from '../services/notifications';
+import { startAlarmLoop, stopAlarmLoop } from '../services/notifications';
+import { loadCachedWatches } from '../services/storage';
 import { formatDateCode } from '../utils/dateHelpers';
+import { resolveAlarmBookingUrl } from '../utils/urlHelpers';
 
 function AlarmOverlayBody({ alarmData, onDismiss }) {
-  const player = useAudioPlayer(ALARM_SOUND_ASSET);
   const [linkError, setLinkError] = useState(null);
+  const [cachedWatches, setCachedWatches] = useState([]);
 
   const label = alarmData?.label || 'BookMyShow Ticket Alert';
   const dateDisplay = formatDateCode(alarmData?.date_code);
   const venues = Array.isArray(alarmData?.venues) ? alarmData.venues : [];
-  const showtimesUrl = alarmData?.showtimes_url || '';
 
   useEffect(() => {
     let mounted = true;
 
-    async function beginAlarm() {
-      await configureAlarmAudioMode();
-      if (!mounted) return;
-      startLoopingAlarmPlayback(player);
-    }
+    loadCachedWatches()
+      .then((list) => {
+        if (mounted && Array.isArray(list)) {
+          setCachedWatches(list);
+        }
+      })
+      .catch(() => {});
 
-    beginAlarm();
+    startAlarmLoop();
 
     return () => {
       mounted = false;
-      Vibration.cancel();
-      try {
-        player.pause();
-      } catch {
-        // Player already released on unmount
-      }
     };
-  }, [player]);
+  }, [alarmData]);
 
   const handleStopAlarm = async () => {
-    await stopLoopingAlarmPlayback(player);
+    await stopAlarmLoop();
     onDismiss();
   };
 
   const handleBookOnBMS = async () => {
     setLinkError(null);
-    await stopLoopingAlarmPlayback(player);
-    if (!showtimesUrl) {
-      setLinkError('No BookMyShow showtimes URL was included in this alert.');
-      return;
-    }
+    const normalizedUrl = resolveAlarmBookingUrl(alarmData, cachedWatches);
+
     try {
-      const supported = await Linking.canOpenURL(showtimesUrl);
-      if (!supported) {
-        setLinkError('Unable to open BookMyShow link on this device.');
-        return;
-      }
-      await Linking.openURL(showtimesUrl);
+      await Linking.openURL(normalizedUrl);
+      await stopAlarmLoop();
       onDismiss();
     } catch (err) {
-      setLinkError(err.message || 'Failed to open BookMyShow.');
+      const detail = err?.message ? ` (${err.message})` : '';
+      setLinkError(
+        `Could not open BookMyShow automatically${detail}. Open this URL in your browser: ${normalizedUrl}`
+      );
     }
   };
 
@@ -121,7 +107,9 @@ function AlarmOverlayBody({ alarmData, onDismiss }) {
 
         {linkError && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{linkError}</Text>
+            <Text selectable style={styles.errorText}>
+              {linkError}
+            </Text>
           </View>
         )}
 
@@ -140,12 +128,17 @@ function AlarmOverlayBody({ alarmData, onDismiss }) {
 }
 
 export default function ActiveAlarmOverlay({ alarmData, onDismiss }) {
+  const handleRequestClose = async () => {
+    await stopAlarmLoop();
+    onDismiss();
+  };
+
   return (
     <Modal
       visible={Boolean(alarmData)}
       animationType="slide"
       presentationStyle="fullScreen"
-      onRequestClose={onDismiss}
+      onRequestClose={handleRequestClose}
     >
       {alarmData ? (
         <AlarmOverlayBody alarmData={alarmData} onDismiss={onDismiss} />
@@ -267,9 +260,10 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: COLORS.danger,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
+    lineHeight: 18,
   },
   controls: {
     gap: 12,
