@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BMS Ticket Alarm",
+    "name": "ShowDrop",
     "slug": "bms-ticket-alarm",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -13,11 +13,10 @@
     "android": {
       "package": "com.rishi.bmsticketalarm",
       "googleServicesFile": "./google-services.json",
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "backgroundColor": "#0b0f19",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#00162c"
       },
       "permissions": [
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -29,6 +28,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/adaptive-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#00162c"
+        }
+      ],
       [
         "expo-audio",
         {
