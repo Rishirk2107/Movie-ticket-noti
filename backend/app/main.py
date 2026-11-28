@@ -16,9 +16,11 @@ from pydantic import BaseModel, HttpUrl
 
 from app.bms_client import (
     build_api_url,
+    close_bms_session,
     extract_url_info,
     fetch_synopsis,
     fetch_venues_direct,
+    get_bms_session,
     parse_page_cta_from_html,
     parse_release_date,
     parse_venues_and_dates,
@@ -103,6 +105,7 @@ async def lifespan(app: FastAPI):
     client, watches_col, seen_col = await init_db()
     app.state.watches_col = watches_col
     app.state.seen_col = seen_col
+    await get_bms_session()
     poll_task = asyncio.create_task(poll_loop(watches_col, seen_col))
     try:
         yield
@@ -112,6 +115,7 @@ async def lifespan(app: FastAPI):
             await poll_task
         except asyncio.CancelledError:
             pass
+        await close_bms_session()
         await client.close()
 
 
@@ -215,7 +219,7 @@ async def proxy_movies_chennai():
     Get movies in Chennai.
     Tries BMS CDN response cache, then discovery API, then explore HTML fallback.
     """
-    async with AsyncSession(impersonate="chrome", timeout=15.0) as s:
+    if (s := await get_bms_session()):
         # Strategy 1: BMS CDN Response Cache for movies-chen-web
         cdn_urls = [
             "https://assets-in.bmscdn.com/discovery-catalog/response-cache/movies-chen-web.json",
@@ -283,7 +287,7 @@ async def proxy_synopsis(eventcode: str):
     headers = {**DEFAULT_HEADERS, "Referer": "https://in.bookmyshow.com/"}
 
     payload = None
-    async with AsyncSession(impersonate="chrome", timeout=15.0) as s:
+    if (s := await get_bms_session()):
         # Strategy 1: BMS mobile synopsis CDN cache (contains exact pageCta language & format options)
         cdn_urls = [
             f"https://in.bmscdn.com/moviesmaster/movies-synopsis-dynamic/chen-mob-{ec_lower}.json",

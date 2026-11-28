@@ -1,13 +1,151 @@
 import asyncio
 import json
+import random
 import re
 import urllib.parse
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlparse
 from curl_cffi.requests import AsyncSession
 
-from app.config import API_BASE_URL, DEFAULT_HEADERS, SYNOPSIS_API_URL
+from app.config import (
+    API_BASE_URL,
+    BMS_COOKIE,
+    BMS_PROXY_URL,
+    DEFAULT_HEADERS,
+    SYNOPSIS_API_URL,
+)
 from app.logger import add_log
+
+BMS_IMPERSONATE_PROFILE = "chrome131"
+BMS_HOME_URL = "https://in.bookmyshow.com/"
+
+
+class BMSBlockedError(RuntimeError):
+    """Raised when BookMyShow / Cloudflare returns HTTP 403."""
+
+    def __init__(self, message: str, status_code: int = 403):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+_shared_session: AsyncSession | None = None
+_session_warmed: bool = False
+_proxy_logged: bool = False
+_session_lock = asyncio.Lock()
+
+
+def _mask_proxy_url(proxy_url: str) -> str:
+    """Return a credential-free scheme://host:port summary for safe logging."""
+    try:
+        parsed = urlparse(proxy_url)
+        scheme = parsed.scheme or "http"
+        host = parsed.hostname or "unknown"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{scheme}://{host}{port}"
+    except Exception:
+        return "<configured-proxy>"
+
+
+def get_bms_proxies() -> dict[str, str] | None:
+    if not BMS_PROXY_URL:
+        return None
+    return {"http": BMS_PROXY_URL, "https": BMS_PROXY_URL}
+
+
+def build_rgn_cookie(region_code: str = "CHEN", city: str = "Chennai") -> str:
+    """Build URL-encoded Rgn cookie matching the watch's region_code and city."""
+    rc = (region_code or "CHEN").strip().upper()
+    cn = (city or "Chennai").strip()
+    raw_val = f"|Code={rc}|Name={cn}|"
+    return f"Rgn={urllib.parse.quote(raw_val, safe='')}"
+
+
+def _build_bms_headers(
+    referer: str = BMS_HOME_URL,
+    region_code: str = "CHEN",
+    city: str = "Chennai",
+) -> dict[str, str]:
+    rc = (region_code or "CHEN").strip().upper()
+    rgn_cookie = build_rgn_cookie(rc, city)
+    cookie_parts = [rgn_cookie]
+    if BMS_COOKIE:
+        cookie_parts.append(BMS_COOKIE.strip())
+    return {
+        **DEFAULT_HEADERS,
+        "x-region-code": rc,
+        "Origin": "https://in.bookmyshow.com",
+        "Referer": referer or BMS_HOME_URL,
+        "Cookie": "; ".join(p for p in cookie_parts if p),
+    }
+
+
+async def get_bms_session() -> AsyncSession:
+    """Return a persistent curl_cffi AsyncSession (reusing TLS/cookie state)."""
+    global _shared_session, _proxy_logged
+    async with _session_lock:
+        if _shared_session is None:
+            proxies = get_bms_proxies()
+            if proxies and not _proxy_logged:
+                add_log(
+                    "INFO",
+                    f"BMS outbound proxy enabled: {_mask_proxy_url(BMS_PROXY_URL)}",
+                )
+                _proxy_logged = True
+            _shared_session = AsyncSession(
+                impersonate=BMS_IMPERSONATE_PROFILE,
+                timeout=15.0,
+                proxies=proxies,
+            )
+        return _shared_session
+
+
+async def reset_bms_session() -> None:
+    """Close and clear the persistent session so next request re-warms cookies."""
+    global _shared_session, _session_warmed
+    async with _session_lock:
+        old = _shared_session
+        _shared_session = None
+        _session_warmed = False
+    if old is not None:
+        try:
+            await old.close()
+        except Exception:
+            pass
+
+
+async def close_bms_session() -> None:
+    """Cleanly close the shared BMS session on shutdown."""
+    await reset_bms_session()
+
+
+async def warmup_bms_session(
+    session: AsyncSession,
+    region_code: str = "CHEN",
+    city: str = "Chennai",
+    force: bool = False,
+) -> None:
+    """
+    Hit https://in.bookmyshow.com/ once per session so Cloudflare clearance
+    and region cookies persist across subsequent API requests.
+    """
+    global _session_warmed
+    if _session_warmed and not force:
+        return
+    try:
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+            "Referer": BMS_HOME_URL,
+            "Cookie": build_rgn_cookie(region_code, city),
+        }
+        resp = await session.get(BMS_HOME_URL, headers=headers)
+        _session_warmed = True
+        if resp.status_code == 403:
+            add_log("WARN", "BMS warm-up hit HTTP 403; cookies may be challenged.")
+        else:
+            add_log("INFO", f"BMS session warmed up (HTTP {resp.status_code}).")
+    except Exception as exc:
+        add_log("WARN", f"BMS session warm-up failed: {exc}")
 
 # Release date formats BMS uses: "Nov 20, 2026", "Dec 17, 2026", "20 Nov, 2026"
 _RELEASE_DATE_FORMATS = [
@@ -510,9 +648,11 @@ async def fetch_synopsis(
         }
 
     if session:
+        await warmup_bms_session(session)
         return await _do(session)
-    async with AsyncSession(impersonate="chrome", timeout=15.0) as s:
-        return await _do(s)
+    shared = await get_bms_session()
+    await warmup_bms_session(shared)
+    return await _do(shared)
 
 
 async def fetch_venues_direct(
@@ -520,25 +660,43 @@ async def fetch_venues_direct(
     date_code: str | None = None,
     session: AsyncSession | None = None,
     max_retries: int = 2,
+    region_code: str = "CHEN",
+    city: str = "Chennai",
 ) -> tuple[dict[str, str], list[str]]:
     """
     Fetch venues for a given date. Returns (venues, available_dates).
     - venues: {venueCode: venueName}
     - available_dates: list of YYYYMMDD strings discovered in the date strip
     If BMS auto-snaps the date, returns ({}, []) to avoid storing a wrong date.
+    Raises BMSBlockedError immediately on HTTP 403 without retrying.
     """
     api_url, referer = build_api_url(raw_url, date_code=date_code)
-    headers = {**DEFAULT_HEADERS, "Referer": referer}
+    headers = _build_bms_headers(referer=referer, region_code=region_code, city=city)
 
     async def _fetch(s: AsyncSession) -> tuple[dict[str, str], list[str]]:
+        await warmup_bms_session(s, region_code=region_code, city=city)
+
         for attempt in range(max_retries + 1):
             try:
                 add_log("INFO", f"Calling BMS API for date {date_code or 'default'}...")
                 resp = await s.get(api_url, headers=headers)
+
+                if resp.status_code == 403:
+                    snippet = resp.text[:200].replace("\n", " ")
+                    add_log("ERROR", f"BMS API returned HTTP 403 (Cloudflare block): {snippet}")
+                    await reset_bms_session()
+                    raise BMSBlockedError(f"HTTP 403 from BMS API: {snippet}", status_code=403)
+
+                if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                    snippet = resp.text[:200].replace("\n", " ")
+                    raise RuntimeError(f"Transient HTTP {resp.status_code} from BMS API: {snippet}")
+
                 if resp.status_code != 200:
                     snippet = resp.text[:200].replace("\n", " ")
                     add_log("ERROR", f"BMS API returned HTTP {resp.status_code}: {snippet}")
-                    raise RuntimeError(f"HTTP {resp.status_code} from BMS API: {snippet}")
+                    # Non-retryable 4xx (other than 403/429)
+                    raise ValueError(f"HTTP {resp.status_code} from BMS API: {snippet}")
+
                 try:
                     payload = resp.json()
                 except Exception as exc:
@@ -562,18 +720,22 @@ async def fetch_venues_direct(
                     f"({len(venues)} venues found, {len(available_dates)} dates in strip)",
                 )
                 return venues, available_dates
+            except (BMSBlockedError, ValueError):
+                # Do not retry HTTP 403 or non-retryable 4xx
+                raise
             except Exception as e:
                 if attempt < max_retries:
+                    backoff = (2 ** attempt) + random.uniform(0.3, 1.2)
                     add_log(
                         "WARN",
-                        f"BMS API call failed (attempt {attempt+1}/{max_retries+1}): {e}. Retrying...",
+                        f"BMS API call failed (attempt {attempt+1}/{max_retries+1}): {e}. Retrying in {backoff:.1f}s...",
                     )
-                    await asyncio.sleep(2.0 * (attempt + 1))
+                    await asyncio.sleep(backoff)
                 else:
-                    raise e
+                    raise
 
     if session:
         return await _fetch(session)
 
-    async with AsyncSession(impersonate="chrome", timeout=15.0) as s:
-        return await _fetch(s)
+    shared = await get_bms_session()
+    return await _fetch(shared)

@@ -4,11 +4,25 @@ from datetime import datetime, timedelta, timezone
 
 from curl_cffi.requests import AsyncSession
 
-from app.bms_client import fetch_venues_direct, replace_url_date
+from app.bms_client import (
+    BMSBlockedError,
+    fetch_venues_direct,
+    get_bms_session,
+    replace_url_date,
+)
 from app.config import IST_TZ
 from app.db import record_venues_and_get_new, update_watch_available_dates
 from app.logger import add_log
 from app.notifier import notify_new_venues
+
+_COOLDOWN_SCHEDULE_SEC = (60, 180, 600)
+# Per-watch circuit-breaker state: {watch_id: {"consecutive_403": int, "cooldown_until": datetime | None}}
+_circuit_state: dict[str, dict] = {}
+
+
+def _compute_403_cooldown_seconds(consecutive_403: int) -> float:
+    idx = min(max(consecutive_403 - 1, 0), len(_COOLDOWN_SCHEDULE_SEC) - 1)
+    return float(_COOLDOWN_SCHEDULE_SEC[idx]) + random.uniform(2.0, 12.0)
 
 
 def get_poll_date_codes(job: dict) -> list[str]:
@@ -87,43 +101,69 @@ async def run_single_watch_check(watches_col, seen_col, job: dict) -> list[tuple
     date_codes = get_poll_date_codes(job)
     all_added: list[tuple[str, str]] = []
     errors: list[str] = []
+    region_code = job.get("region_code") or "CHEN"
+    city = job.get("city") or "Chennai"
 
-    async with AsyncSession(impersonate="chrome", timeout=15.0) as session:
-        for i, d_code in enumerate(date_codes):
-            if i > 0:
-                await asyncio.sleep(1.5)
+    session = await get_bms_session()
+    for i, d_code in enumerate(date_codes):
+        if i > 0:
+            await asyncio.sleep(random.uniform(1.0, 2.5))
 
-            try:
-                venues, discovered_dates = await fetch_venues_direct(
-                    job["url"], date_code=d_code or None, session=session, max_retries=2
+        try:
+            venues, discovered_dates = await fetch_venues_direct(
+                job["url"],
+                date_code=d_code or None,
+                session=session,
+                max_retries=2,
+                region_code=region_code,
+                city=city,
+            )
+
+            # Reset 403 circuit-breaker on first HTTP 200
+            if watch_id in _circuit_state:
+                _circuit_state[watch_id] = {"consecutive_403": 0, "cooldown_until": None}
+
+            # Merge newly discovered dates back into the watch document
+            if discovered_dates:
+                await update_watch_available_dates(watches_col, watch_id, discovered_dates)
+
+            added = await record_venues_and_get_new(
+                seen_col, watch_id, venues, date_code=d_code, mark_notified=True
+            )
+            if added:
+                target_url = replace_url_date(job["url"], d_code) if d_code else job["url"]
+                await notify_new_venues(
+                    job.get("label"),
+                    target_url,
+                    job.get("emails", []),
+                    added,
+                    date_code=d_code,
+                    movie_name=job.get("movie_name"),
+                    alarm_enabled=job.get("alarm_enabled", False),
+                    device_tokens=job.get("device_tokens", []),
+                    watch_id=watch_id,
+                    job=job,
                 )
+                all_added.extend(added)
+        except BMSBlockedError as exc:
+            state = _circuit_state.setdefault(
+                watch_id, {"consecutive_403": 0, "cooldown_until": None}
+            )
+            state["consecutive_403"] += 1
+            cooldown_sec = _compute_403_cooldown_seconds(state["consecutive_403"])
+            state["cooldown_until"] = datetime.now(timezone.utc) + timedelta(seconds=cooldown_sec)
 
-                # Merge newly discovered dates back into the watch document
-                if discovered_dates:
-                    await update_watch_available_dates(watches_col, watch_id, discovered_dates)
-
-                added = await record_venues_and_get_new(
-                    seen_col, watch_id, venues, date_code=d_code, mark_notified=True
-                )
-                if added:
-                    target_url = replace_url_date(job["url"], d_code) if d_code else job["url"]
-                    await notify_new_venues(
-                        job.get("label"),
-                        target_url,
-                        job.get("emails", []),
-                        added,
-                        date_code=d_code,
-                        movie_name=job.get("movie_name"),
-                        alarm_enabled=job.get("alarm_enabled", False),
-                        device_tokens=job.get("device_tokens", []),
-                        watch_id=watch_id,
-                        job=job,
-                    )
-                    all_added.extend(added)
-            except Exception as exc:
-                err_msg = f"Date {d_code or 'default'}: {exc}"
-                print(f"[WARN] Job {watch_id} date check failed: {err_msg}")
-                errors.append(err_msg)
+            err_msg = f"Date {d_code or 'default'}: {exc}"
+            add_log(
+                "WARN",
+                f"HTTP 403 on watch {job.get('label') or watch_id}; aborting remaining dates and entering {cooldown_sec:.0f}s cooldown (streak={state['consecutive_403']}).",
+            )
+            errors.append(err_msg)
+            break
+        except Exception as exc:
+            err_msg = f"Date {d_code or 'default'}: {exc}"
+            print(f"[WARN] Job {watch_id} date check failed: {err_msg}")
+            errors.append(err_msg)
 
     last_error = "; ".join(errors) if errors else None
     await watches_col.update_one(
@@ -146,8 +186,13 @@ async def poll_loop(watches_col, seen_col) -> None:
 
             if is_watch_expired(job):
                 add_log("INFO", f"Watch {job.get('label')} expired on {job.get('end_date')}. Auto-deleted.")
+                _circuit_state.pop(watch_id, None)
                 await watches_col.delete_one({"_id": watch_id})
                 await seen_col.delete_many({"watch_id": watch_id})
+                continue
+
+            cb = _circuit_state.get(watch_id)
+            if cb and cb.get("cooldown_until") and now < cb["cooldown_until"]:
                 continue
 
             last_checked_str = job.get("last_checked_at")
